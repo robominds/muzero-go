@@ -18,7 +18,9 @@ pseudocode), the model learns to beat itself on 5×5, but not yet outside
 opponents.** Its generation 40 beats its own generations 0, 5, 20 and 30
 (0.80, 0.68, 0.88, 0.70 over 40 games each). Yet it loses to the random
 bot (0.33) and to the 200-simulation rollout bot (0.10). The search's
-values go above 1, which no real game result can do. When the random bot
+values go above 1, which no real game result can do (measured before the
+per-depth batch-norm fix, which the final review found behind most of
+it; see run 3). When the random bot
 passes and passing back would win, the search rates passing at about +0.4
 and rates playing on at about +1.4. In one recorded game it kept playing inside
 its own territory until it filled its own last eye, and the random bot
@@ -247,6 +249,12 @@ was well behind the reward-head run at the same generation.
 
 ## Run 3: `5x5-k05-rh` (komi 0.5, reward head on)
 
+> **Note.** Measured before the per-depth batch-norm fix; the final review
+> traced most of it to the BN train/inference mismatch — re-measured below
+> (pending). (Also measured before games stopped by the move cap were
+> treated as truncated rather than ended. The checkpoints of these runs use
+> checkpoint format version 1 and no longer load.)
+
 `runs/5x5-k05-rh/log.csv`, selected generations:
 
 ```
@@ -374,6 +382,10 @@ root value +1.424 (for Black)
 search depth: max 19, mean 7.62; simulations past the real game's end (two passes): 85.5%
 ```
 
+> **Note.** Measured before the per-depth batch-norm fix; the final review
+> traced most of it to the BN train/inference mismatch — re-measured below
+> (pending).
+
 **Diagnosis (partial).** A real game result is −1, 0 or +1, and one
 result is all a board game ever pays. So under the absorbing-state targets,
 no Q above +1 should exist. A reward on the final edge is followed by value
@@ -388,7 +400,8 @@ edges carry reward. The model then rates "keep playing" above "end the game
 and win", and keeps playing until it fills its own last eye. In the games
 above, the visits went to the inflated moves (A1 got 137 of 200 visits at
 200 simulations). I have not yet measured which edges carry the reward:
-no probe reports the predicted rewards.
+no probe reported the predicted rewards at the time (`mzgo_analyze` now
+prints each principal-variation edge's predicted reward and Q).
 
 **A hypothesis this write-up does not confirm.** The brief behind this
 write-up proposed a different mechanism. Self-play endings have no dead
@@ -401,6 +414,11 @@ of any kind. But the positions I examined show the opposite error. The real
 count gave Black the win, and the model *under*-rated the pass. Testing the
 hypothesis needs a position where passing loses because of dead stones
 while the model rates the pass highly. I have not built one.
+
+### Re-measured after the per-depth batch-norm fix (pending)
+
+Pending: run 3 is to be re-run with batch norm statistics per unroll step
+and capped games treated as truncated; nothing here is measured yet.
 
 ## The probes
 
@@ -519,7 +537,8 @@ $ ./build/mzgo_board_probe --checkpoint runs/5x5-s1/checkpoints/gen_0060.mzn --g
 ```
 
 A linear readout fitted on fresh `h` states reads the board back at
-67–77% (three classes per point: empty, own, opponent). Applied to the
+67–77% (three classes per point: empty, own, opponent). These accuracies
+are in-sample: the readout is fitted and scored on the same positions. Applied to the
 state one imagined step later, it drops to 36–42%, and it stays there at
 deeper steps. So the dynamics' states are not in the representation's
 format, at least not linearly. A one-step drop that does not keep falling
@@ -570,7 +589,9 @@ $ ./build/mzgo_analyze --checkpoint runs/5x5-k05-rh/checkpoints/gen_0040.mzn --m
 
 From `log.csv` (`past_end_fraction` is the fraction of simulations that
 went past two imagined passes; `capped_games` counts games that hit the
-50-move cap):
+50-move cap). These runs counted a simulation whose leaf *was* the second
+pass as past the end too; the metric now counts only paths that go on
+beyond the double pass, so later runs' numbers are not directly comparable:
 
 ```
 5x5-s1      g1: past_end 0.030 capped 34 | g10: 0.666 capped 0 | g20: 0.204 capped 1 | g40: 0.187 capped 1 | g60: 0.182 capped 28
@@ -587,10 +608,13 @@ like its self-play games.
 
 ## What is not yet known
 
-- **Where the values above 1 come from.** It could be reward predicted on
-  imagined steps after the end, or on non-final edges, or value not
-  reaching 0 after a final edge. A probe that prints the predicted reward
-  along real and imagined lines would settle it.
+- **Where the values above 1 come from.** Measured before the per-depth
+  batch-norm fix; the final review traced most of it to the BN
+  train/inference mismatch — re-measured below (pending). Before that it
+  could have been reward predicted on imagined steps after the end, or on
+  non-final edges, or value not reaching 0 after a final edge;
+  `mzgo_analyze`'s principal variation now prints the predicted reward
+  along the line.
 - **Whether the dead-stones hypothesis holds** (see run 3).
 - **Whether the no-reward-head run would have recovered.** It was stopped
   at generation 12, while it was still improving against itself (0.725

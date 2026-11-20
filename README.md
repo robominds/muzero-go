@@ -117,28 +117,34 @@ the real rules) and the random bot. A run directory holds:
 | file | contents |
 |---|---|
 | `config.cfg` | the resolved config, every key |
-| `log.csv` | one row per generation: self-play seconds, mean game length, `capped_games` (ended by the 2n² move cap), search `mean_depth` / `max_depth`, `past_end_fraction` (simulations whose imagined path holds two passes in a row), lr, the loss per unroll step (`policy_k0..K`, `value_k0..K`, `reward_k1..K`), the arena scores, the replay window's size |
-| `checkpoints/gen_GGGG.mzn` | the network after generation G (`gen_0000` is the starting one) |
+| `log.csv` | one row per generation: self-play seconds, mean game length, `capped_games` (stopped by the 2n² move cap; their targets are truncated, not ended), search `mean_depth` / `max_depth`, `past_end_fraction` (simulations whose imagined path goes on beyond two passes in a row), lr, the loss per unroll step (`policy_k0..K`, `value_k0..K`, `reward_k1..K`), the arena scores, the replay window's size |
+| `checkpoints/gen_GGGG.mzn` | the network after generation G (`gen_0000` is the starting one); format version 2, with batch norm statistics per unroll step |
 | `sgf/gen_GGGG_I.sgf` | the first `sgf_per_generation` self-play games of each generation |
 | `state.bin` | what a resume needs: generation, step, network, optimizer velocity, replay window |
 
 A new run refuses a non-empty directory. `--resume` continues from
 `state.bin`; overrides may change any key except the architecture keys
 (`board_size`, `history`, `repr_blocks`, `dyn_blocks`, `filters`,
-`value_hidden`, `reward_head`) and `unroll_steps`. To go on past the
+`value_hidden`, `reward_head`, `unroll_steps`: batch norm keeps running
+statistics per unroll step, so K is part of the network). To go on past the
 config's last generation: `--resume DIR --set generations=200`. Every random
 choice is derived from (seed, generation, phase, step), so a resumed run
 writes exactly the checkpoints and `state.bin` an uninterrupted one would,
 and results do not depend on `workers` or `train_threads` (0 = all cores).
 
 `reward_head` (a reward prediction on each dynamics step, trained on the
-result at the game's last move) is on in both presets. The built-in default
+result at the last move of a game the players ended, 0 for a game the move
+cap stopped) is on in both presets. The built-in default
 is off, which is the paper's Appendix G reading, so a config without the
 key keeps that meaning. `docs/results.md` measures why the presets turn it
 on. Opt-in switches, off by default (the paper's version is the default):
-`bn_calibrate` (set generation 0's batch norm statistics from two passes
-over random-move positions, K = 1 then K = 0), `symmetry_augment` (one
-random board symmetry per unroll).
+`bn_calibrate` (set generation 0's batch norm statistics, every unroll
+step's set, from one K-step pass over random-move positions),
+`symmetry_augment` (one random board symmetry per unroll).
+
+Checkpoints and `state.bin` files written before batch norm kept its
+statistics per unroll step (checkpoint format version 1) cannot be loaded
+or resumed; loading one says the format changed.
 
 ### `mzgo_match` — two players, N games
 
@@ -228,9 +234,9 @@ mzgo_analyze --checkpoint P [--moves "C3 D4 pass ..."] [--simulations 200] [--to
 Plays the moves (GTP coordinates or `pass`, Black first) from the empty
 board and runs one search on the position reached: the root value, visits,
 prior and Q of the `--top` moves, the search depth, the share of
-simulations past the real game's end, and the principal variation — which
-below its first move exists only in the model's imagination — with the
-value along it.
+simulations going beyond the real game's end, and the principal variation —
+which below its first move exists only in the model's imagination — with
+each edge's predicted reward and Q and the value along it.
 
 ### `mzgo_bench` — what the network costs
 

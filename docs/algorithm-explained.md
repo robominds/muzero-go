@@ -79,9 +79,9 @@ What is new relative to the two siblings, chapter by chapter:
 | legality below the root | real rules at every node | none | none, on a game where illegal moves are common (ch. 04) |
 | end of game in the tree | exact, scored by the rules | none | none; two passes do not stop the search (ch. 04, 06) |
 | unvisited child in pUCT | Q = 0 (a draw), or exact for a game-ending pass | Q̄ = 0 (a loss) | Q̄ = 0 (a loss) (ch. 05) |
-| value target | final result | n-step return, by default reaching the end (Monte Carlo) | final result, with absorbing states past the end (ch. 06) |
+| value target | final result | n-step return, by default reaching the end (Monte Carlo) | final result, with absorbing states past the end; a game cut by the move cap is truncated (ch. 06) |
 | training step | one position | a 5-step unroll of MLPs | a 5-step unroll of residual convnets, BPTT by hand (ch. 07) |
-| batch norm | one call per layer per step | — (no batch norm) | `g` called K times per step, `f` K + 1 times (ch. 08) |
+| batch norm | one call per layer per step | — (no batch norm) | `g` called K times per step, `f` K + 1 times, with running statistics per call (ch. 08) |
 | batching the search | virtual loss inside one tree | one game at a time | lockstep across games (ch. 09) |
 
 The code that is *not* new was copied from `alphazero-go` into namespace
@@ -143,7 +143,7 @@ MuZeroNetwork::MuZeroNetwork(const NetConfig& cfg, uint64_t seed)
       pred_(cfg.filters, cfg.boardSize, cfg.valueHidden),
       reward_(cfg.rewardHead ? ValueHead(cfg.filters, cfg.area(), cfg.valueHidden) : ValueHead()) {
 ```
-*src/network.cpp:81 — `MuZeroNetwork::MuZeroNetwork`*
+*src/network.cpp:86 — `MuZeroNetwork::MuZeroNetwork`*
 
 `h` and `g` are both a `Trunk`: the AlphaZero trunk, a 3×3 stem convolution
 with batch norm and ReLU, then residual blocks of two convolutions with a
@@ -158,7 +158,7 @@ skip connection. Only the stem's input width differs: 18 planes for `h`,
     // Residual blocks: conv -> BN -> ReLU -> conv -> BN -> + input -> ReLU.
     ...
 ```
-*src/blocks.cpp:156 — `Trunk::forward`, abridged*
+*src/blocks.cpp:164 — `Trunk::forward`, abridged*
 
 **The hidden state is spatial.** In `muzero-tictactoe` a latent was a flat
 vector of 32 floats. Here it is `F` feature maps of n × n, the same shape
@@ -183,15 +183,19 @@ class ModelSession {               // one per worker thread; not thread-safe
 public:
     virtual ~ModelSession() = default;
     virtual void initialInference(const float* observations /*[B][planes][area]*/, int B, ModelOutput& out) = 0;
-    virtual void recurrentInference(const float* hidden /*[B][hiddenSize]*/, const int* actions, int B,
+    virtual void recurrentInference(const float* hidden /*[B][hiddenSize]*/, const int* actions,
+                                    const int* depths /*[B], >= 1: depth of the state produced*/, int B,
                                     ModelOutput& out) = 0;
 };
 ```
-*include/mzgo/model.hpp:27 — `ModelSession`*
+*include/mzgo/model.hpp:30 — `ModelSession`*
 
 `initialInference` is `h` then `f`, once per move. `recurrentInference` is
 `g` then `f`, once per simulation. Everything below the root goes through
-the second call, with no board anywhere in its arguments.
+the second call, with no board anywhere in its arguments. The one thing it
+is told besides the hidden state and the action is each row's depth in
+the tree, because the network keeps its batch norm statistics per unroll
+step and picks them by depth (chapter 08).
 
 | preset | `repr_blocks` | `dyn_blocks` | `filters` | `value_hidden` | parameters (`h` / `g` / `f`) |
 |---|---|---|---|---|---|
@@ -225,7 +229,7 @@ void writeActionPlane(const int* actions, int stride, int B, int A, float* plane
     }
 }
 ```
-*src/network.cpp:39 — `writeActionPlane`*
+*src/network.cpp:41 — `writeActionPlane`*
 
 `A` is the number of points, so the pass action, `A`, writes nothing. Two
 consequences are worth seeing.
@@ -257,7 +261,7 @@ plane is written straight into channel `F` of the tensor that already holds
         writeActionPlane(batch.actions.data() + (k - 1), K, B, A, in + F * M);
         dyn_.forward(be, in, B, n, ws.dynCaches_[k - 1], mode, pool);
 ```
-*src/network.cpp:140 — `MuZeroNetwork::forward`, abridged*
+*src/network.cpp:155 — `MuZeroNetwork::forward`, abridged*
 
 With `symmetry_augment = true` (off by default; the paper does not mention
 augmentation), one of the eight board symmetries is applied to the whole
@@ -287,7 +291,7 @@ void minMaxForward(const float* x, int n, float* y, MinMaxCache& c) {
     for (int i = 0; i < n; ++i) y[i] = (x[i] - c.min) / c.range;
 }
 ```
-*src/blocks.cpp:52 — `minMaxForward`, abridged*
+*src/blocks.cpp:60 — `minMaxForward`, abridged*
 
 The minimum and maximum are taken over the whole hidden state of one
 sample (all `F × n × n` values), not per channel. It runs after `h` and
@@ -314,7 +318,7 @@ the argmin and argmax elements:
         dx[c.argmax] = static_cast<float>(dx[c.argmax] - sumDyY / r);
     }
 ```
-*src/blocks.cpp:68 — `minMaxBackward`, abridged*
+*src/blocks.cpp:76 — `minMaxBackward`, abridged*
 
 A finite-difference check covers this, including the floored case
 (`test_minmax_gradient`, `test_minmax_constant_input` in
@@ -364,7 +368,7 @@ n² + 1 actions, with the prior straight from `f`:
     const int first = static_cast<int>(nodes_.size());
     for (int a = 0; a < dims_.actions(); ++a) nodes_.push_back(Node{a, probs_[a]});
 ```
-*src/mcts.cpp:113 — `Search::expandLeaf`, abridged*
+*src/mcts.cpp:114 — `Search::expandLeaf`, abridged*
 
 A test pins both halves: a fake model that loves an illegal move gets zero
 visits for it at the root, and the same move is still chosen below the root.
@@ -377,7 +381,7 @@ visits for it at the root, and the same move is still chosen below the root.
     assert(total == 50 && s.rootEdges().size() == 3);
     // Below the root nothing is masked: the favourite is chosen there.
 ```
-*tests/test_mcts.cpp:160 — `test_root_masking`, abridged*
+*tests/test_mcts.cpp:219 — `test_root_masking`, abridged*
 
 On tic-tac-toe this was a curiosity. On Go it is the central difficulty,
 because every one of the rules below shows up in ordinary play:
@@ -413,19 +417,22 @@ because every one of the rules below shows up in ordinary play:
   06's absorbing states.
 
 The search measures the last point directly. For every simulation it
-checks whether the imagined path contains two passes in a row, counting
-the real move before the root when that was a pass:
+checks whether the imagined path goes on *beyond* two passes in a row,
+counting the real move before the root when that was a pass. A leaf that
+is itself the second pass does not count: evaluating the state where the
+game ends is legitimate (that is where the payoff is); expanding states
+after it is the search wandering past the end:
 
 ```cpp
     bool prevPass = previousMoveWasPass_, pastEnd = false;
-    for (size_t i = 1; i < path_.size(); ++i) {
+    for (size_t i = 1; i + 1 < path_.size(); ++i) {
         const bool isPass = nodes_[path_[i]].action == dims_.area();
         pastEnd = pastEnd || (isPass && prevPass);
         prevPass = isPass;
     }
     pastEnd_ += pastEnd;
 ```
-*src/mcts.cpp:113 — `Search::expandLeaf`, abridged*
+*src/mcts.cpp:114 — `Search::expandLeaf`, abridged*
 
 Averaged over a generation's self-play it is the `past_end_fraction` column
 of `log.csv`, next to `mean_depth` and `max_depth`. That is the
@@ -482,7 +489,7 @@ the reward on the edge plus the negated child value:
     float mean(const Node& n) const { return n.visits ? n.valueSum / static_cast<float>(n.visits) : 0.0f; }
     float edgeQ(const Node& child) const { return child.reward + cfg_.discount * -mean(child); }
 ```
-*include/mzgo/mcts.hpp:81 — `Search`, abridged*
+*include/mzgo/mcts.hpp:94 — `Search`, abridged*
 
 Backup walks the path from the leaf up, flipping the sign once per ply:
 
@@ -496,7 +503,7 @@ Backup walks the path from the leaf up, flipping the sign once per ply:
         v = n.reward + cfg_.discount * -v;
     }
 ```
-*src/mcts.cpp:113 — `Search::expandLeaf`, abridged*
+*src/mcts.cpp:114 — `Search::expandLeaf`, abridged*
 
 The pseudocode's own sign handling is ambiguous (its `ucb_score` uses
 `child.value()` without negation); this negamax reading is the standard
@@ -577,9 +584,13 @@ a target for each of the K + 1 states of the unroll:
         batch.actions[static_cast<size_t>(b) * K + k] = transformAction(sym, a, n);
     }
 
+    const bool ended = g.endedByPasses();
     for (int k = 0; k <= K; ++k) {
         const int p = t + k;
         ...
+        const bool known = ended || p <= T;
+        batch.valueMask[slot] = known ? 1.0f : 0.0f;
+        batch.rewardMask[slot] = known ? 1.0f : 0.0f;
         if (p < T) {
             const float* src = g.policies.data() + static_cast<size_t>(p) * A;
             for (int a = 0; a < A; ++a) pol[transformAction(sym, a, n)] = src[a];
@@ -587,10 +598,10 @@ a target for each of the K + 1 states of the unroll:
             batch.valueTargets[slot] = g.outcomeFor(p);
         } else {
             batch.policyMask[slot] = 0.0f;
-            batch.valueTargets[slot] = 0.0f;
+            batch.valueTargets[slot] = (!ended && p == T) ? g.outcomeFor(T) : 0.0f;
         }
         // The move that ended the game (made at T-1) earns its mover the outcome.
-        batch.rewardTargets[slot] = (k >= 1 && p == T) ? g.outcomeFor(T - 1) : 0.0f;
+        batch.rewardTargets[slot] = (ended && k >= 1 && p == T) ? g.outcomeFor(T - 1) : 0.0f;
     }
 ```
 *src/game_record.cpp:40 — `fillSample`, abridged*
@@ -622,11 +633,26 @@ lies past the end of the game, and the pseudocode treats it as *absorbing*:
 the game has ended, nothing more can happen, all future rewards are 0, so
 the value target is 0. The pseudocode's policy target there is empty, which
 leaves its loss undefined; this implementation masks the term
-(`policyMask = 0`). And the actions fed to `g` past the end are drawn
-uniformly from all n² + 1 actions — the pseudocode leaves this open, and
-random padding is the common reading (muzero-general does the same).
-`test_short_game_padding` in `tests/test_game_record.cpp` builds such a
-sample by hand.
+(`policyMask = 0`). The pseudocode itself never unrolls far past the end:
+its `sample_batch` takes the actions `g.history[i:i+K]`, so an unroll near
+the end of a game is shorter (its recurrent steps are then weighted
+1/len(actions) instead of 1/K), and the deepest state it reaches is T. This
+project always unrolls K steps and feeds `g` uniformly random actions from
+all n² + 1 past the end, as muzero-general does — a choice of this
+project, not a gap the pseudocode leaves open. `test_short_game_padding`
+in `tests/test_game_record.cpp` builds such a sample by hand.
+
+**Truncated games.** A game can also stop at the move cap (2n² moves)
+without the players passing. That game did not end; it was cut off. Its
+last move was an ordinary move, so it earns no reward; the score at the
+cap is the best estimate of the last position's value, so position T gets
+`outcomeFor(T)` as its value target; and past T nothing is known, so the
+value and reward losses are masked there too (`valueMask`, `rewardMask`,
+which the loss applies like `policyMask`). Treating the capped game as
+ended, as an earlier version did, put the outcome on the last move as a
+reward and taught the model that ordinary moves can pay out.
+`GameRecord::endedByPasses()` tells the two apart;
+`test_capped_game_truncated` checks the targets.
 
 **What the absorbing target teaches on Go.** Follow it through. The state
 after the game's final pass is position T: an absorbing state, value
@@ -635,9 +661,7 @@ pass, whatever the score. Without a reward head the search sees that pass
 as Q = 0 − v(after) ≈ 0: ending the game looks like a draw to both sides,
 even when one of them is far ahead. The information is not lost from the
 model — the value at the position *before* the final pass is trained on
-the true result — but the edge that ends the game carries no payoff. The
-same holds for a game stopped by the move cap: its last state is absorbing
-too.
+the true result — but the edge that ends the game carries no payoff.
 
 That is what the reward head fixes. With `reward_head = true`, the reward
 target on the edge into position T is the outcome for the player who made
@@ -659,8 +683,10 @@ earlier generations but loses to a random player. In the positions where
 it goes wrong, the search rates a move that keeps the game going at about
 +1.4, above anything a real result can be. It rates the pass that would end
 a won game at about +0.4. So the model plays on inside its own territory
-until it fills its own last eye. Where those values above 1 come from is
-not yet measured (`docs/results.md`, "What is not yet known").
+until it fills its own last eye. Those values above 1 were measured before
+the batch norm fix of chapter 08; the final review traced most of them to
+batch norm normalizing differently at inference than in training, and
+`docs/results.md` re-measures them.
 
 **Sampling.** A training batch picks positions uniformly over every
 position in the replay window, the paper's "states are sampled uniformly"
@@ -677,7 +703,7 @@ one:
         fillSample(games_[gi], t, K, history, sym, rng, out, b);
     }
 ```
-*src/replay_buffer.cpp:32 — `ReplayBuffer::sampleBatch`, abridged*
+*src/replay_buffer.cpp:33 — `ReplayBuffer::sampleBatch`, abridged*
 
 > **vs AlphaZero-Go.** `alphazero-go` trains on single positions: one
 > observation, its visit distribution, its result. MuZero trains on the
@@ -714,7 +740,7 @@ void MuZeroNetwork::forward(TrainWorkspace& ws, const TrainBatch& batch, BnMode 
     }
 }
 ```
-*src/network.cpp:140 — `MuZeroNetwork::forward`, abridged*
+*src/network.cpp:155 — `MuZeroNetwork::forward`, abridged*
 
 The same `g` weights run K times, so they cannot hold the activations their
 backward pass needs. Every call gets its own cache (`dynCaches_[k - 1]`,
@@ -736,7 +762,7 @@ weighted:
                     d[a] = static_cast<float>(w * (std::exp(l[a] - logZ[b]) * sumPi - target[a]));
                 ws.dValues_[k][b] = static_cast<float>(scale * 2.0 * (values[b] - batch.valueTargets[row(b)]) / B);
 ```
-*src/network.cpp:174 — `MuZeroNetwork::loss`, abridged*
+*src/network.cpp:190 — `MuZeroNetwork::loss`, abridged*
 
 Step 0 has weight 1 and every later step 1/K. That is the pseudocode's
 `update_weights`, which appends `(1.0, ...)` for the initial inference and
@@ -775,7 +801,7 @@ for k = 0.
         }
     }
 ```
-*src/network.cpp:243 — `MuZeroNetwork::backward`, abridged*
+*src/network.cpp:261 — `MuZeroNetwork::backward`, abridged*
 
 `g`'s input gradient has `F + 1` channels; the last one belongs to the
 action plane, which is data, not a learned quantity, and is dropped.
@@ -828,7 +854,7 @@ gradient with 0.5 must be the average of the gradients with 0 and 1, and
             const double mean = (static_cast<double>(g0[t][i]) + g1[t][i]) / 2;
             assert(std::fabs(gHalf[t][i] - mean) <= 1e-5 * scale);
 ```
-*tests/test_network.cpp:259 — `test_gradient_scale_half`, abridged*
+*tests/test_network.cpp:287 — `test_gradient_scale_half`, abridged*
 
 **What a step costs.** A sample's forward pass is `h + K·g + (K+1)·f` and
 the backward pass the same again: with K = 5, six trunk passes and six
@@ -844,86 +870,122 @@ depend on the thread count (`test_pool_bit_identical`).
 
 ## 08 — Batch norm across unroll steps
 
-**Concept: batch statistics in a recurrent network, and a calibration trap**
+**Concept: batch statistics in a recurrent network, one set per step**
 
 Every trunk and head uses batch norm. In training it normalizes with the
 current batch's mean and variance and updates exponential running
 averages (momentum 0.1); in search, which sees one position at a time, it
 uses the running averages. That is ordinary. What is new is that `g` is
 called K times per training step and `f` K + 1 times, each call with a
-different input distribution:
+different input distribution: `g`'s first call reads `s⁰`, which `h`
+made from a real position, its second call reads `s¹`, which `g` itself
+made, and so on.
 
 - In a training step, `g`'s call at step k normalizes with the statistics
   of its own batch, the states `sᵏ⁻¹` of all B samples. Each call is
   self-consistent.
-- Each call also updates the running statistics, so `g`'s running averages
-  get K updates per step and `f`'s K + 1, in unroll order. The result is a
-  blend of every step's statistics, the later steps weighted a little more
-  (the last call's update is the most recent; with K = 5 and momentum 0.1
-  the relative weights run from 0.9⁴ ≈ 0.66 for `g`'s first call, or
-  0.9⁵ ≈ 0.59 for `f`'s, to 1 for the last).
-- In search, `g` is applied at every depth with that one blend, and `f` is
-  applied to the root's `s⁰` and to deep imagined states with the same
-  blend.
+- With one set of running statistics per layer, each call would also
+  update that one set, so `g`'s running averages would get K updates per
+  step and `f`'s K + 1, in unroll order: a blend of every step's
+  statistics. In search, `g` would then be applied at every depth with
+  that one blend, and `f` to the root's `s⁰` and to deep imagined states
+  alike. Wherever the steps' distributions differ, search would compute
+  something training never did.
 
-If imagined states drift in distribution as k grows, the network in search
-mode does not compute quite what it computed in training. Min-max
-normalization helps — every state is in [0, 1] — but it fixes only the
-range, not the distribution inside it.
+That is not a hypothetical. The first version of this project kept one set
+per layer, and the final review measured what it cost on the 5×5 run's
+generation 40: the reward head's error at k = 1 was 0.032 in inference mode
+against 0.0046 with the batch's own statistics, and setting the running
+statistics from a K = 1 batch moved a non-final move's predicted reward
+from +0.888 to +0.002. Min-max normalization does not prevent this — it
+fixes every state's range, not the distribution inside it.
+
+So every batch norm keeps one set of running statistics **per call
+index**, while its learnable γ and β stay shared (one layer, one set of
+weights, as before): `h` has one set, `g` and the reward head K (the calls
+that produce `s¹..sᴷ`), `f` K + 1 (`s⁰..sᴷ`). Training step k updates only
+set k. Search at depth d uses set min(d, K): a leaf deeper than the unroll
+ever went reuses the statistics of the last step, the closest thing
+training has seen. The paper does not say how it handles batch norm across
+the unroll (its pseudocode has none); this is this project's choice. K is
+then part of the network's shape: `unroll_steps` is an architecture key,
+stored in the checkpoint, which names its buffers per set
+(`dyn.block0.bn1.runMean.k3`).
 
 Every forward runs in one of four modes (`BnMode` in
 `include/mzgo/blocks.hpp`): `Infer` for search, `Train` for a training step,
 `Probe` for evaluating a loss without side effects, and `Calibrate`, which
-*sets* the running statistics instead of averaging into them:
+*sets* the running statistics instead of averaging into them. Each takes
+the set to use or update; in `Infer` mode it may instead be one set per
+sample, because a lockstep batch (chapter 09) mixes leaves of many depths:
 
 ```cpp
     switch (mode) {
-        case BnMode::Infer: bn.forwardInfer(x, M, y, pool); break;
-        case BnMode::Train: bn.forwardTrain(x, M, y, xhat, invStd, true, pool); break;
+        case BnMode::Infer:
+            if (sets.rows) bn.forwardInferRows(x, B, A, sets.rows, y, pool);
+            else bn.forwardInfer(x, M, y, pool, sets.set);
+            break;
+        case BnMode::Train: bn.forwardTrain(x, M, y, xhat, invStd, true, pool, BatchNorm2d::kMomentum, sets.set); break;
         case BnMode::Probe: bn.forwardTrain(x, M, y, xhat, invStd, false, pool); break;
-        case BnMode::Calibrate: bn.forwardTrain(x, M, y, xhat, invStd, true, pool, 1.0f); break;
+        case BnMode::Calibrate: bn.forwardTrain(x, M, y, xhat, invStd, true, pool, 1.0f, sets.set); break;
     }
 ```
 *src/blocks.cpp:16 — `bnForward`*
 
-**The calibration trap.** `alphazero-go` found that a freshly initialized
-deep network, whose running statistics are mean 0 and variance 1, computes
+Inference batch norm is a fixed affine map per channel, so choosing a set
+per sample costs nothing: each sample's channel gets its own scale and
+shift, computed by the same helper as the one-set version, so a row's bits
+do not depend on which depths the other rows have
+(`test_mixed_depths_bit_identical`). The search passes each leaf's depth
+along with its request, and the network turns it into set indices:
+
+```cpp
+    // Depth d is call index min(d, K): f's set d, g's and the reward head's set d - 1.
+    for (int b = 0; b < B; ++b) {
+        assert(depths[b] >= 1);
+        const int k = std::min(depths[b], cfg_.unrollSteps);
+        ws.dynSets[b] = k - 1;
+        ws.predSets[b] = k;
+    }
+```
+*src/network.cpp:363 — `MuZeroNetwork::recurrentInference`, abridged*
+
+**Calibration.** `alphazero-go` found that a freshly initialized deep
+network, whose running statistics are mean 0 and variance 1, computes
 badly scaled activations in inference mode, and its first self-play games
 collapse; it sets generation 0's statistics from one training-mode pass
 (`bn_calibrate`, on by default there). This project has the same switch,
 **off by default**, because the paper does not do it (chapter 10's "when
-the paper's version fails" rule). Turning it on reveals the trap: a
-Calibrate pass *sets* each layer's statistics to those of its input, so a
-layer called several times keeps only its last call's. One K-step pass
-would leave `g` calibrated to step K's input and `f` to `sᴷ` — not the
-states search starts from. So calibration runs two passes:
+the paper's version fails" rule). With one set per call index, a single
+K-step Calibrate pass sets every set from the input its own step sees:
 
 ```cpp
-// A Calibrate pass SETS each layer's statistics to those of its input in
-// that pass, and a layer reused in the unroll (g K times, f K + 1 times)
-// keeps only its last call's statistics. One K-step pass would leave g with
-// step K's statistics and f with s^K's. So two passes: first K = 1, which
-// sets g (and the reward head) from its first call, on s0; then K = 0,
-// which sets h and f from the real position's s0 and leaves g as it is.
+// A Calibrate pass SETS, at every unroll step k, each layer's statistics of
+// call index k to those of its input in that pass (network.hpp keeps one
+// set per step), so one K-step pass calibrates every set: h and f on the
+// real positions' s0, g, the reward head and f on s1..sK.
 void Trainer::calibrateBatchNorm() {
     ...
-    for (int K : {1, 0}) {
-        TrainWorkspace ws(netCfg, cfg_.batchSize, K, *backend_, pool_.get());
-        net_->calibrateBatchNorm(ws, truncateUnroll(batch, K, netCfg));
-    }
+    buffer.sampleBatch(cfg_.batchSize, cfg_.unrollSteps, cfg_.history, false, rng, batch);
+    net_->calibrateBatchNorm(*workspace_, batch);
 }
 ```
-*src/trainer.cpp:250 — `Trainer::calibrateBatchNorm`, abridged*
+*src/trainer.cpp:232 — `Trainer::calibrateBatchNorm`, abridged*
+
+(With one set per layer, a Calibrate pass leaves each layer with its last
+call's statistics, `g` with step K's and `f` with `sᴷ`'s, and the earlier
+version needed two passes, K = 1 then K = 0, to get the states search
+starts from right; even then deeper depths ran on the wrong statistics.)
 
 `test_inference_matches_probe` in `tests/test_network.cpp` checks the
-consequence exactly: after calibrating on a batch, inference on that batch
-reproduces the training-mode forward, but only for the calls whose
-statistics the layer kept (after K = 1, the recurrent inference; after
-K = 0, the initial one).
+whole design exactly: after calibrating on a K = 3 batch, the initial
+inference and the recurrent inference at depths 1, 2, 3 reproduce the
+training-mode forward's hidden states, policies, values and rewards at
+every step.
 
 > **vs AlphaZero-Go.** One forward per step, one set of statistics per
-> layer: no blend and no trap. Its `bn_calibrate` is a single pass and on
-> by default.
+> layer: no blend and no per-step sets. Its `bn_calibrate` is a single pass
+> and on by default.
 
 ---
 
@@ -953,10 +1015,12 @@ running selects one leaf; all those leaves go to the network in one batched
             const LeafRequest req = live[k]->search.selectLeaf();
             batch.push_back(static_cast<int>(k));
             actions.push_back(req.action);
+            depths.push_back(req.depth);         // the games' leaves sit at different depths
             parents.insert(parents.end(), req.parentHidden, req.parentHidden + hs);
         }
         if (!batch.empty()) {
-            session.recurrentInference(parents.data(), actions.data(), static_cast<int>(batch.size()), out);
+            session.recurrentInference(parents.data(), actions.data(), depths.data(), static_cast<int>(batch.size()),
+                                       out);
             for (size_t b = 0; b < batch.size(); ++b)
                 live[batch[b]]->search.expandLeaf(out.hidden.data() + b * hs, out.logits.data() + b * dims.actions(),
                                                   out.values[b], out.rewards[b]);
@@ -970,8 +1034,9 @@ the end of a group. Each game's tree is exactly the sequential pseudocode
 search: selection, one evaluation, backup, in order. The search API is
 split into `beginRoot` / `selectLeaf` / `expandLeaf` precisely so a driver
 can interleave many trees this way. `test_lockstep_equals_sequential`
-plays the same games in groups of 4 and of 1 against a fake model and
-checks the records are identical.
+plays the same games in groups of 4 and of 1 against a fake model whose
+values depend on the depth it is given, and checks the records are
+identical: each row of a mixed-depth batch got its own depth.
 
 MuZero needs no tree to be shared between moves either. `beginRoot` clears
 the tree, because the new root must be `h` of the real position, not the
@@ -1020,7 +1085,7 @@ void Trainer::runGeneration() {
         optimizer_.step(params, lr, pool_.get());
         ++globalStep_;
 ```
-*src/trainer.cpp:296 — `Trainer::runGeneration`, abridged*
+*src/trainer.cpp:275 — `Trainer::runGeneration`, abridged*
 
 Then the checkpoint `gen_GGGG.mzn`, `state.bin`, a couple of SGF games,
 the arena (every `arena_every` generations: generation g against
@@ -1053,10 +1118,11 @@ uninterrupted run would have written. The test does it:
     assert(readFile(checkpointPath(straight, 2)) == readFile(checkpointPath(split, 2)));
     assert(readFile(straight + "/state.bin") == readFile(split + "/state.bin"));
 ```
-*tests/test_trainer.cpp:124 — `test_resume_matches_uninterrupted`, abridged*
+*tests/test_trainer.cpp:127 — `test_resume_matches_uninterrupted`, abridged*
 
 A resume may override any key except the architecture keys (they fix the
-weights' shapes) and `unroll_steps` (log.csv has one column per step).
+shapes of the weights and buffers; `unroll_steps` is one of them, since
+batch norm keeps statistics per step, and log.csv has one column per step).
 A non-finite loss, or non-finite weights after a generation's last step,
 stops the run before anything of that generation is written, so a blow-up
 never reaches `state.bin`.
@@ -1098,7 +1164,9 @@ the real position t + k.
                 }
             }
             if (next.empty()) break;
-            session->recurrentInference(hidden.data(), actions.data(), static_cast<int>(next.size()), out);
+            const std::vector<int> depths(next.size(), k + 1);   // every row produces s_{k+1}
+            session->recurrentInference(hidden.data(), actions.data(), depths.data(), static_cast<int>(next.size()),
+                                        out);
 ```
 *src/probes.cpp:42 — `forEachImagined`, abridged*
 
@@ -1121,7 +1189,7 @@ total-variation distance ½ Σₐ |p(sᵏ)ₐ − p(h(position t+k))ₐ|.
         r.valueError += std::fabs(static_cast<double>(out.values[row]) - fresh.values[s.game][p]);
         r.policyTv += 0.5 * l1;
 ```
-*src/probes.cpp:149 — `latentProbe`, abridged*
+*src/probes.cpp:151 — `latentProbe`, abridged*
 
 *How to read it:* k = 0 is 0 by construction (0 up to rounding). Growth with k
 is the drift of the imagination away from what the network would say on
@@ -1144,7 +1212,7 @@ position t + k, split by kind:
                 else if (!legal && board.isLegal(a)) row[a] |= kSuperko;
             }
 ```
-*src/probes.cpp:174 — `rulesProbe`, abridged*
+*src/probes.cpp:176 — `rulesProbe`, abridged*
 
 *How to read it:* the `illegal` column at k = 0 shows whether `f` learned
 legality from the visit-count targets at all (it sees a real board there);
@@ -1175,7 +1243,7 @@ network), then applied to imagined states:
             }
         }
 ```
-*src/probes.cpp:318 — `boardProbe`, abridged*
+*src/probes.cpp:320 — `boardProbe`, abridged*
 
 *How to read it:* at k = 0 the accuracy says how linearly the stones can
 be read out of `h`'s state at all; compare it with the trivial baseline of
@@ -1190,16 +1258,18 @@ form `h` uses", not necessarily "not known". (Own and opponent swap every
 ply, so a model that forgot whose move it is fails here too.)
 
 **Search statistics in `log.csv`.** Per generation: `mean_depth` and
-`max_depth` of each simulation's new leaf, `past_end_fraction` (chapter
-04), `capped_games` (games ended by the move cap rather than two passes,
-chapter 06), `mean_length`. A deep search is not good or bad in itself;
+`max_depth` of each simulation's new leaf, `past_end_fraction` (the share
+of simulations whose path went on beyond a double pass, chapter 04),
+`capped_games` (games stopped by the move cap rather than two passes, whose
+targets are truncated, chapter 06), `mean_length`. A deep search is not good or bad in itself;
 depth past the real end of the game is effort spent on states that do not
 exist.
 
 **`mzgo_analyze`: one search, in full.** For a move list, the root search's
 visits, priors and Q for the top moves, the depth statistics, and the
-principal variation — the most visited child, repeatedly — with the value
-along it. Below the first move the PV exists only in the model's
+principal variation — the most visited child, repeatedly — with each
+edge's predicted reward and Q and the state's value along it, so the
+terminal payoff shows where the model puts it. Below the first move the PV exists only in the model's
 imagination; it can contain moves on occupied points or a pass after the
 game would have ended, and reading one is the most direct way to see what
 the search believes. To see what the model makes of the end of a game,
@@ -1218,29 +1288,30 @@ what value, the PV passes back.
 | Concept | Where |
 |---|---|
 | Observation planes (own / opponent, 8 positions, side to move) | `encodePlanes` — `src/encode.cpp:15` |
-| The three functions | `MuZeroNetwork::MuZeroNetwork` — `src/network.cpp:81` |
-| The model interface search sees | `ModelSession` — `include/mzgo/model.hpp:27` |
-| Action as a plane, pass all zero | `writeActionPlane` — `src/network.cpp:39` |
-| Hidden-state min-max normalization | `minMaxForward`, `minMaxBackward` — `src/blocks.cpp:52, 68` |
-| Representation then prediction | `MuZeroNetwork::initialInference` — `src/network.cpp:329` |
-| Dynamics then prediction | `MuZeroNetwork::recurrentInference` — `src/network.cpp:344` |
+| The three functions | `MuZeroNetwork::MuZeroNetwork` — `src/network.cpp:86` |
+| The model interface search sees | `ModelSession` — `include/mzgo/model.hpp:30` |
+| Action as a plane, pass all zero | `writeActionPlane` — `src/network.cpp:41` |
+| Hidden-state min-max normalization | `minMaxForward`, `minMaxBackward` — `src/blocks.cpp:60, 76` |
+| Representation then prediction | `MuZeroNetwork::initialInference` — `src/network.cpp:348` |
+| Dynamics then prediction | `MuZeroNetwork::recurrentInference` — `src/network.cpp:363` |
 | Root-only legality, Dirichlet noise | `Search::beginRoot` — `src/mcts.cpp:36` |
 | pUCT, unvisited child scored as a loss | `Search::selectChild` — `src/mcts.cpp:75` |
 | Q normalization with known bounds | `MinMaxStats::update`, `MinMaxStats::normalize` — `src/mcts.cpp:12, 17` |
-| Unmasked expansion, signed backup, past-end count | `Search::expandLeaf` — `src/mcts.cpp:113` |
-| Targets, absorbing states, random padding | `fillSample` — `src/game_record.cpp:40` |
-| Uniform position sampling | `ReplayBuffer::sampleBatch` — `src/replay_buffer.cpp:32` |
-| The unroll forward | `MuZeroNetwork::forward` — `src/network.cpp:140` |
-| Loss weights 1 and 1/K | `MuZeroNetwork::loss` — `src/network.cpp:174` |
-| BPTT and the 0.5 hidden-gradient scale | `MuZeroNetwork::backward` — `src/network.cpp:243` |
+| Unmasked expansion, signed backup, past-end count | `Search::expandLeaf` — `src/mcts.cpp:114` |
+| Targets, absorbing states, truncated games, random padding | `fillSample` — `src/game_record.cpp:40` |
+| Uniform position sampling | `ReplayBuffer::sampleBatch` — `src/replay_buffer.cpp:33` |
+| The unroll forward | `MuZeroNetwork::forward` — `src/network.cpp:155` |
+| Loss weights 1 and 1/K | `MuZeroNetwork::loss` — `src/network.cpp:190` |
+| BPTT and the 0.5 hidden-gradient scale | `MuZeroNetwork::backward` — `src/network.cpp:261` |
 | Batch norm modes | `bnForward` — `src/blocks.cpp:16` |
-| Calibrating batch norm across the unroll | `Trainer::calibrateBatchNorm` — `src/trainer.cpp:250` |
-| Lockstep self-play | `playGroup`, `playSelfPlay` — `src/selfplay.cpp:32, 113` |
-| The generation loop | `Trainer::runGeneration` — `src/trainer.cpp:296` |
-| Resume | `Trainer::resume` — `src/trainer.cpp:167` |
+| Running statistics per unroll step, chosen per sample | `BatchNorm2d::forwardInferRows` — `src/layers.cpp:116` |
+| Calibrating batch norm across the unroll | `Trainer::calibrateBatchNorm` — `src/trainer.cpp:232` |
+| Lockstep self-play | `playGroup`, `playSelfPlay` — `src/selfplay.cpp:32, 116` |
+| The generation loop | `Trainer::runGeneration` — `src/trainer.cpp:275` |
+| Resume | `Trainer::resume` — `src/trainer.cpp:152` |
 | Imagined rollouts along real games | `forEachImagined` — `src/probes.cpp:42` |
-| Latent, rules and board probes | `latentProbe`, `rulesProbe`, `boardProbe` — `src/probes.cpp:149, 174, 318` |
-| One search, printed | `analyzePosition` — `src/probes.cpp:347` |
+| Latent, rules and board probes | `latentProbe`, `rulesProbe`, `boardProbe` — `src/probes.cpp:151, 176, 320` |
+| One search, printed | `analyzePosition` — `src/probes.cpp:349` |
 
 ---
 

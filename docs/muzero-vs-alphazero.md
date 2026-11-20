@@ -20,9 +20,9 @@ numbers name the function's definition, as of this writing.
 
 | | `alphazero-go` | `muzero-go` |
 |---|---|---|
-| Dynamics inside the search | the real board: `descend` plays each move on a copy (`alphazero-go/src/mcts.cpp:87`) | the learned `g`: `MuZeroNetwork::recurrentInference` (`src/network.cpp:344`) |
+| Dynamics inside the search | the real board: `descend` plays each move on a copy (`alphazero-go/src/mcts.cpp:87`) | the learned `g`: `MuZeroNetwork::recurrentInference` (`src/network.cpp:363`) |
 | A tree node holds | a `Board` | an `F × n × n` hidden state, no decoder |
-| Legal moves in the tree | at every node: `Mcts::expand` creates edges for legal moves only (`alphazero-go/src/mcts.cpp:150`) | root only: `Search::beginRoot` (`src/mcts.cpp:36`); every other node has all n² + 1 children (`Search::expandLeaf`, `src/mcts.cpp:113`) |
+| Legal moves in the tree | at every node: `Mcts::expand` creates edges for legal moves only (`alphazero-go/src/mcts.cpp:150`) | root only: `Search::beginRoot` (`src/mcts.cpp:36`); every other node has all n² + 1 children (`Search::expandLeaf`, `src/mcts.cpp:114`) |
 | End of the game in the tree | exact: `Mcts::isTerminal` (two passes or the move cap) and the Tromp-Taylor score (`alphazero-go/src/mcts.cpp:41, 45`) | none; `past_end_fraction` measures how often the search goes past it |
 | Unvisited child (first-play value) | Q = 0 on [−1, 1] (a draw); a game-ending pass gets its exact score at expansion | Q̄ = 0 on the normalized [0, 1] scale (a loss) |
 | Exploration term | fixed `c_puct = 1.5` on raw Q, √max(1, N) | c1 = 1.25 + log((N + c2 + 1)/c2), c2 = 19652, on Q̄ = (Q + 1)/2 |
@@ -30,11 +30,12 @@ numbers name the function's definition, as of this writing.
 | Tree between moves | the subtree under the move played is kept (`Mcts::advance`, `alphazero-go/src/mcts.cpp:368`) | rebuilt every move (the root must be `h` of the real position) |
 | Resignation in self-play | on in the 9×9 preset (calibrated `v_resign`) | none (the paper does not use it for MuZero) |
 | Training sample | one position: input, π, z | a position plus the next K = 5 moves: K + 1 sets of targets |
-| Value target | the final result z | the final result per unroll step; 0 past the end (absorbing) |
+| Value target | the final result z | the final result per unroll step; 0 past the end (absorbing); a game stopped by the move cap is truncated: the score at the cap, no targets past it, no reward |
 | Network | one: trunk + policy and value heads | three: `h` (trunk), `g` (trunk on F + 1 planes), `f` (heads) |
 | Forward work per training sample | trunk + heads | h + K·g + (K + 1)·f = 6 trunks + 6 heads at K = 5 |
 | Symmetry augmentation | a random symmetry per sample, always | off by default (`symmetry_augment`) |
-| Batch norm calibration of generation 0 | on by default (`bn_calibrate`) | off by default (opt-in switch) |
+| Batch norm running statistics | one set per layer | one set per layer and unroll step (`g` K, `f` K + 1), chosen by search depth |
+| Batch norm calibration of generation 0 | on by default (`bn_calibrate`) | off by default (opt-in switch); one K-step pass sets every step's statistics |
 | Learning rate | piecewise constant by generation (`lr_schedule = 0:0.02,90:0.002`) | exponential decay per step, 0.02 · 0.1^(step / 60000) on 9×9 |
 | Replay window | the last 200,000 positions | the last 2,500 games |
 
@@ -49,7 +50,7 @@ judge real positions.
 
 `muzero-go` makes a child by asking the model: the parent's hidden state
 and the move, as one extra input plane, go through `g`, then `f`
-(`MuZeroNetwork::recurrentInference`, `src/network.cpp:344`). Whether the
+(`MuZeroNetwork::recurrentInference`, `src/network.cpp:363`). Whether the
 child "knows" that stones were captured depends on what `g` learned. The
 diagnostics `mzgo_latent_probe`, `mzgo_rules_probe` and `mzgo_board_probe`
 exist only because of this difference: they compare imagined states with
@@ -70,7 +71,7 @@ suicides and superko repetitions never appear anywhere in its tree.
 `Search::beginRoot` (`src/mcts.cpp:36`), renormalizing the prior over it
 and mixing the Dirichlet noise only into it. Every deeper node has a child
 for each of the n² + 1 actions with `f`'s prior unmasked
-(`Search::expandLeaf`, `src/mcts.cpp:113`), as the paper prescribes
+(`Search::expandLeaf`, `src/mcts.cpp:114`), as the paper prescribes
 ("MuZero only masks legal actions at the root"). On tic-tac-toe that was a
 curiosity; on Go a large share of the points are occupied in the middle
 game, captures reopen points, and ko depends on the previous position. What
@@ -220,16 +221,21 @@ symmetry.
 
 `muzero-go` trains on unrolls (`fillSample`, `src/game_record.cpp:40`): the
 input planes at t, the moves t … t + K − 1, and for every k = 0..K the visit
-distribution and result at t + k. Past the end of the game: value 0, no
-policy loss, random actions. Both value targets are Monte Carlo returns —
+distribution and result at t + k. Past the end of a game the players
+ended: value 0, no policy loss, random actions. A game the move cap stopped
+is truncated instead: no reward on any move, the score at the cap as the
+value of the last position, and no value, reward or policy target past it.
+(`alphazero-go` trains every position of a capped game on its score, the
+same as an ended one; with no rewards and no unroll past the end, the
+distinction does not arise there.) Both value targets are Monte Carlo returns —
 the actual result — since the pseudocode's board-game `td_steps` reaches the
 end of every game; MuZero's machinery could bootstrap from stored root
 values (and Reanalyze them), but not on board games as published.
 
 The loss weights each unroll step: 1 for k = 0 and 1/K for the rest, and
 the gradient into each hidden state after a recurrent step is halved
-(`MuZeroNetwork::loss`, `MuZeroNetwork::backward`, `src/network.cpp:174,
-243`). `alphazero-go` has one step and no such scaling.
+(`MuZeroNetwork::loss`, `MuZeroNetwork::backward`, `src/network.cpp:190,
+261`). `alphazero-go` has one step and no such scaling.
 
 ## Network shapes and training cost
 
@@ -257,7 +263,8 @@ Copied from `alphazero-go` and unchanged in behaviour:
 - the input encoding: 18 planes, own/opponent stones for the last 8
   positions and two side-to-move planes, and the eight symmetries;
 - the layers (`Conv2d`, `BatchNorm2d`, `Linear`, ReLU) with their
-  hand-written backward passes, the naive and BLAS backends, the thread pool
+  hand-written backward passes (`BatchNorm2d` here can keep several sets of
+  running statistics, one per unroll step; with one set it is the same), the naive and BLAS backends, the thread pool
   and its bit-for-bit determinism;
 - the optimizer: SGD, momentum 0.9, weight decay 1e-4 on conv and linear
   weights;

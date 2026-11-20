@@ -118,7 +118,8 @@ feature maps (spatial, as in the paper, so actions can be planes).
   intermediate rewards, we omit the reward prediction loss"). The reward
   head (`reward_head = true`: the value head's shape, 1×1 conv → BN → ReLU →
   FC → ReLU → FC → tanh, reading the normalized sᵏ; trained on the final
-  outcome at the last move, 0 elsewhere) is **on in both presets**. Without
+  outcome at the last move of a game the players ended, 0 elsewhere, and 0
+  on every edge of a game the move cap truncated) is **on in both presets**. Without
   it, the game-ending move leads to an absorbing state with value target 0
   and carries no reward, so the search values it at about 0 whatever the
   score. Measured on 5×5 in `docs/results.md`: a winning pass got prior
@@ -130,6 +131,18 @@ feature maps (spatial, as in the paper, so actions can be planes).
   number of planes" then a fully connected layer). Policy: 1×1 conv to 2
   planes → BN → ReLU → FC to n²+1 logits. Value: 1×1 conv to 1 plane → BN
   → ReLU → FC → ReLU → FC → tanh.
+- **Batch norm statistics per unroll step** (my call; the paper and its
+  pseudocode are silent on batch norm across the unroll). Every batch norm
+  keeps one set of running statistics per call index — h one, g and the
+  reward head K (the calls producing s¹..sᴷ), f K + 1 (s⁰..sᴷ) — while its
+  learnable γ and β stay shared. Training step k normalizes with its own
+  batch statistics and updates only set k; inference at search depth d
+  uses set min(d, K). With one shared set, inference at every depth would
+  normalize with an average over the unroll steps and compute activations
+  training never produced (the final review measured k = 1 reward MSE
+  0.032 at inference against 0.0046 with batch statistics). K
+  (`unroll_steps`) is therefore an architecture key, stored in the
+  checkpoint.
 - **Hidden-state normalization** (App. G): after h and after every g,
   `s ← (s − min s) / (max s − min s)` over all elements of one sample's
   hidden state. Backward passes the gradient through min and max exactly
@@ -182,8 +195,10 @@ search simulation costs about one AlphaZero evaluation.
   backs each one up. Each game's search is exactly the sequential
   pseudocode search; batching only spans independent games. The search
   code is written against a small `Model` interface
-  (`initialInference(batch)`, `recurrentInference(batch)`) so it can be
-  tested with a fake model.
+  (`initialInference(batch)`, `recurrentInference(batch, depths)`: each
+  row's depth in the tree picks the network's per-step batch norm
+  statistics, and one lockstep batch mixes depths) so it can be tested
+  with a fake model.
 
 ### Self-play and the game
 
@@ -211,12 +226,23 @@ k = 0..K (K = `unroll_steps` = 5):
   return, "For board games, we bootstrap directly to the end of the
   game"). Ties (possible only with integer komi) are 0.
 - policy target = stored visit distribution at t+k.
-- For t+k ≥ T (past the end: absorbing states): value target 0, no policy
-  loss (the pseudocode's empty policy target; its loss is undefined, so the
-  term is masked), reward target 0.
-- actions a_{t+1..t+K} = the game's moves; past the end, uniformly random
-  actions from all n²+1 (the pseudocode leaves this underspecified; random
-  padding is the common reading, e.g. muzero-general — my call).
+- A game the players ended (two passes): at t+k = T, value target 0, no
+  policy loss (the pseudocode's empty policy target; its loss is undefined,
+  so the term is masked), and reward target = the outcome for the player
+  who made the last move (the pseudocode's `last_reward`); for t+k > T
+  (absorbing states) value 0, reward 0, no policy loss.
+- A game the move cap stopped was truncated, not ended (my call: the
+  pseudocode stops self-play at `max_moves` without saying how such a game
+  is targeted): reward target 0 on every edge (its last move was an
+  ordinary move), value target at t+k = T the score at the cap from the
+  view of the player to move (the best estimate of that position's
+  value), and for t+k > T no value, reward or policy target (all masked).
+- actions a_{t+1..t+K} = the game's moves. The pseudocode's `sample_batch`
+  takes `g.history[i:i+K]`, so it never unrolls past T: an unroll near the
+  end is shorter, and its recurrent steps are scaled by 1/len(actions).
+  This project always unrolls K steps and pads past T with uniformly
+  random actions from all n²+1, as muzero-general does — my call, not a
+  gap in the pseudocode.
 - Sampling: games uniform from the replay window, positions uniform in the
   game (App. G: "For board games, states are sampled uniformly"). Uniform
   over positions overall is the closer match; implementation picks a
@@ -226,10 +252,12 @@ k = 0..K (K = `unroll_steps` = 5):
 
 - loss = Σ_k scale_k · [ℓᵖ(πₖ, pₖ) + ℓᵛ(zₖ, vₖ) (+ ℓʳ if reward head)]
   + c‖θ‖², with ℓᵖ cross-entropy, ℓᵛ squared error, averaged over the
-  batch.
-- scale_0 = 1, scale_k = 1/K for k ≥ 1 (the pseudocode's weights; the
-  paper's text says 1/K for every head — noted as a discrepancy, pseudocode
-  followed).
+  batch. Each term has a per-sample mask (policy past the end; value and
+  reward past the cap of a truncated game); the mean still divides by B.
+- scale_0 = 1, scale_k = 1/K for k ≥ 1 (the pseudocode's weights: its
+  1/len(actions) is 1/K whenever the unroll stays inside the game, and this
+  project always unrolls K steps; the paper's text says 1/K for every head
+  — noted as a discrepancy, pseudocode followed).
 - The gradient flowing back into a hidden state through g is multiplied
   by 0.5. Placement follows the pseudocode, which applies
   `hidden_state = scale_gradient(hidden_state, 0.5)` after each
@@ -239,9 +267,9 @@ k = 0..K (K = `unroll_steps` = 5):
   noted as a discrepancy, pseudocode followed.
 - Backpropagation through time: forward stores every step's activations
   (one set per unroll step for g and f); backward runs k = K..0.
-- Batch norm: training mode with each call's own batch statistics; the
-  same g layers are used at every unroll step, so their running statistics
-  get K updates per training step. Inference uses running statistics.
+- Batch norm: training mode with each call's own batch statistics; step k
+  updates only its own set of running statistics (see "Three functions"),
+  which inference at depth k uses.
 - Optimizer: SGD momentum 0.9, weight decay 1e-4 on conv/FC weights
   (gradient + c·w, matching TF's `l2_loss` = Σw²/2), copied from
   `alphazero-go`.
@@ -281,7 +309,8 @@ losses k = 0..K for policy and value, lr, arena results), checkpoints
 for resume), a couple of SGF games per generation.
 
 Config: a `key = value` preset file plus `--set key=value` overrides; the
-architecture keys cannot change on resume.
+architecture keys (`unroll_steps` among them, for the per-step batch norm
+statistics) cannot change on resume.
 
 ### When the paper's version fails
 
@@ -296,7 +325,8 @@ the paper version's failure and the switch's effect side by side. A
 failed paper-version run, measured and explained, is a valid result.
 Candidate switch already known: `bn_calibrate` (copied from
 `alphazero-go`: set every BN layer's running statistics from one training-
-mode pass at generation 0), default off.
+mode pass at generation 0; here one K-step pass, which sets every unroll
+step's statistics), default off.
 
 ## Evaluation
 
@@ -383,8 +413,9 @@ resume, then arena and GTP).
    window scaled down; 5×5 / 9×9 instead of 19×19.
 2. Synchronous generations instead of asynchronous actors/learner.
 3. Batched lockstep self-play across games (search per game unchanged).
-4. Policy-loss masking past the end of the game, and random action padding
-   (both underspecified in the pseudocode).
+4. Policy-loss masking past the end of the game (the pseudocode's empty
+   policy target), and K-step unrolls padded with random actions past the
+   end (the pseudocode instead stops the unroll at the end of the game).
 5. Loss weights follow the pseudocode (scale 1 at k = 0) rather than the
    paper's text (1/K for all).
    Likewise the 0.5 hidden-gradient scale follows the pseudocode's
@@ -398,6 +429,11 @@ resume, then arena and GTP).
     keep it. The presets follow §3 and the pseudocode (`reward_head = true`),
     because App. G's reading was measured to fail (`docs/results.md`). It is
     the one switch on by default in the presets.
+11. Batch norm running statistics per unroll step (the paper is silent on
+    batch norm across the unroll); see "Three functions".
+12. Games stopped by the move cap are truncated, not ended (no reward, the
+    score as the value at the cap, no targets past it); the pseudocode does
+    not say how a game cut at `max_moves` is targeted.
 
 ## Left to the builder
 
