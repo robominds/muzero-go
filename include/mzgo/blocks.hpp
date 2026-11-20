@@ -1,3 +1,4 @@
+// Adapted from alphazero-go's network (Mark Castelluccio) for mzgo.
 // The pieces MuZero's three functions are built from. Representation h and
 // dynamics g are both a Trunk (a 3x3 stem conv, then residual blocks, as in
 // AlphaZero) followed by min-max normalization of the hidden state;

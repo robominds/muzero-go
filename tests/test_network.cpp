@@ -230,45 +230,64 @@ static void test_unroll_gradient() {
     std::printf("test_unroll_gradient passed\n");
 }
 
-// K = 1: the gradient entering s0 is f's plus scale * g's input gradient,
-// so the representation's gradient is affine in the scale and nothing else
-// depends on it.
-static void test_gradient_scale_half() {
+// Every parameter's gradient after trainStep with hidden-gradient scales
+// 0, 0.5 and 1 on the same batch (the forward does not depend on the scale).
+static std::vector<std::vector<std::vector<float>>> gradsForScales(int K) {
     const NetConfig cfg = smallConfig(false);
-    const int B = 3, K = 1;
+    const int B = 3;
     NaiveBackend be;
     MuZeroNetwork net(cfg, 31);
     Rng rng(32);
     randomizeAffine(net, rng);
     const TrainBatch batch = randomBatch(cfg, B, K, rng);
     TrainWorkspace ws(cfg, B, K, be);
-    net.trainStep(ws, batch, 0.0f);
-    const auto g0 = gradsOf(net);
-    net.trainStep(ws, batch, 0.5f);
-    const auto gHalf = gradsOf(net);
-    net.trainStep(ws, batch, 1.0f);
-    const auto g1 = gradsOf(net);
+    std::vector<std::vector<std::vector<float>>> out;
+    for (float scale : {0.0f, 0.5f, 1.0f}) {
+        net.trainStep(ws, batch, scale);
+        out.push_back(gradsOf(net));
+    }
+    return out;
+}
 
-    const std::vector<ParamView> params = net.params();
-    bool reprDiffers = false;
+// The pseudocode scales the gradient of s_k for k >= 1 only (after each
+// recurrent_inference), so:
+// K = 1: s0 -> g_1 is the only dynamics edge and it is unscaled; no
+//   gradient depends on the scale, bit for bit.
+// K = 2: s1 -> g_2 is scaled. The gradient entering s1 (so g_1's weights)
+//   and through it s0 (so h's weights) is affine in the scale; f's weights
+//   only see the forward and do not depend on it.
+static void test_gradient_scale_half() {
+    const auto one = gradsForScales(1);
+    assert(one[0] == one[1] && one[2] == one[1]);
+
+    const auto two = gradsForScales(2);
+    const std::vector<ParamView> params = MuZeroNetwork(smallConfig(false), 31).params();
+    const auto& g0 = two[0];
+    const auto& gHalf = two[1];
+    const auto& g1 = two[2];
+    bool reprDiffers = false, dynDiffers = false;
     for (size_t t = 0; t < params.size(); ++t) {
-        if (params[t].name.compare(0, 5, "repr.") != 0) {
+        const std::string& name = params[t].name;
+        if (name.compare(0, 5, "pred.") == 0) {
             assert(g0[t] == gHalf[t] && g1[t] == gHalf[t]);   // bit for bit
             continue;
         }
+        assert(name.compare(0, 5, "repr.") == 0 || name.compare(0, 4, "dyn.") == 0);
         // Relative to the tensor's largest gradient: an entry that is a near
-        // cancellation of f's and g's contributions carries the rounding of
-        // both terms, which is relative to them, not to the small result.
+        // cancellation of the scaled and unscaled contributions carries the
+        // rounding of both terms, which is relative to them, not to the small
+        // result.
         double scale = 0.0;
         for (size_t i = 0; i < params[t].size; ++i)
             scale = std::max({scale, std::fabs(static_cast<double>(g0[t][i])), std::fabs(static_cast<double>(g1[t][i]))});
         for (size_t i = 0; i < params[t].size; ++i) {
             const double mean = (static_cast<double>(g0[t][i]) + g1[t][i]) / 2;
             assert(std::fabs(gHalf[t][i] - mean) <= 1e-5 * scale);
-            if (std::fabs(static_cast<double>(g1[t][i]) - g0[t][i]) > 1e-3 * scale) reprDiffers = true;
+            if (std::fabs(static_cast<double>(g1[t][i]) - g0[t][i]) > 1e-3 * scale)
+                (name[0] == 'r' ? reprDiffers : dynDiffers) = true;
         }
     }
-    assert(reprDiffers);
+    assert(reprDiffers && dynDiffers);
     std::printf("test_gradient_scale_half passed\n");
 }
 

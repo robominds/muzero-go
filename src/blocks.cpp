@@ -1,3 +1,4 @@
+// Adapted from alphazero-go's network (Mark Castelluccio) for mzgo.
 #include "mzgo/blocks.hpp"
 #include <algorithm>
 #include <cassert>

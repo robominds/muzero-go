@@ -1,3 +1,4 @@
+// Adapted from alphazero-go's network (Mark Castelluccio) for mzgo.
 #include "mzgo/network.hpp"
 #include <algorithm>
 #include <cassert>
@@ -233,9 +234,11 @@ UnrollLoss MuZeroNetwork::loss(TrainWorkspace& ws, const TrainBatch& batch, bool
 }
 
 // Backprop through time, k = K..0. The gradient reaching s_k is f's (and
-// the reward head's) input gradient plus, for k < K, hiddenGradScale times
-// the first F channels of g's input gradient at step k + 1 (the action
-// plane's share is dropped). Through the normalization, then the trunk that
+// the reward head's) input gradient plus, for k < K, the first F channels of
+// g's input gradient at step k + 1 (the action plane's share is dropped),
+// times hiddenGradScale for k >= 1 and unscaled for s0: the pseudocode
+// scales hidden_state after each recurrent_inference, never after
+// initial_inference. Through the normalization, then the trunk that
 // produced s_k: g at step k (whose input is s_{k-1}) or h for k = 0.
 void MuZeroNetwork::backward(TrainWorkspace& ws, int B, float hiddenGradScale) {
     const Backend& be = *ws.backend_;
@@ -270,12 +273,14 @@ void MuZeroNetwork::backward(TrainWorkspace& ws, int B, float hiddenGradScale) {
 
         if (k >= 1) {
             dyn_.backward(be, ws.state_[k - 1].data(), dRaw, B, n, ws.dynCaches_[k - 1], ws.dIn_.data(), pool);
-            // scale_gradient(s_{k-1}, 0.5): channels 0..F-1 of g's input are
-            // s_{k-1} ([F][B][A] first in [F+1][B][A]); channel F, the
-            // action plane, is not learned.
+            // scale_gradient(s_{k-1}, 0.5) when s_{k-1} came from g (k >= 2);
+            // s0 (k = 1) gets the full gradient. Channels 0..F-1 of g's
+            // input are s_{k-1} ([F][B][A] first in [F+1][B][A]); channel F,
+            // the action plane, is not learned.
+            const float scale = k >= 2 ? hiddenGradScale : 1.0f;
             const float* dIn = ws.dIn_.data();
             parallelRanges(pool, size, kElementChunk, [&](size_t begin, size_t end) {
-                for (size_t j = begin; j < end; ++j) dNext[j] = hiddenGradScale * dIn[j];
+                for (size_t j = begin; j < end; ++j) dNext[j] = scale * dIn[j];
             });
         } else {
             repr_.backward(be, ws.obs_.data(), dRaw, B, n, ws.reprCache_, nullptr, pool);
