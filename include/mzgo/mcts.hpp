@@ -49,6 +49,8 @@ public:
     MinMaxStats(float lo = -1.f, float hi = 1.f);
     void update(float q);
     float normalize(float q) const;    // (q - lo)/(hi - lo) if hi > lo else q
+    float lo() const { return lo_; }
+    float hi() const { return hi_; }
 private:
     float lo_, hi_;
 };
@@ -95,6 +97,7 @@ public:
     SearchResult result() const;
     int selectMove(const SearchResult&, bool sample, Rng& rng) const;  // sample ∝ visits, else argmax (ties: lowest index)
     std::vector<RootEdge> rootEdges() const;   // ascending action order
+    const MinMaxStats& minMaxStats() const { return minmax_; }   // this tree's Q range so far
     // The principal variation, read from the tree: from the root, repeatedly
     // the most visited child (ties: lowest action), up to maxLen plies, while
     // that child has visits. Each entry is (action, that child's mean value

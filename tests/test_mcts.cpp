@@ -157,6 +157,65 @@ static void test_backup_signs() {
     std::printf("test_backup_signs passed\n");
 }
 
+// Rewards on the edges: every leaf has reward +0.6 on its incoming edge and
+// value -0.5 for its own side to move, so an edge into a fresh leaf is worth
+// Q = r - v_child = 0.6 + 0.5 = 1.1 to the parent: outside the [-1, 1] a
+// board game's values live in, which MinMaxStats has to widen for.
+static void test_rewards_and_minmax_widening() {
+    FakeModel model(kDims, 1, nullptr, [](const float*, int, FakeOutput& o) {
+        o.reward = 0.6f;
+        o.value = -0.5f;
+    });
+    auto session = model.newSession(1);
+    const std::vector<float> logits(kActions, 0.0f);
+
+    // One legal root action (4), so the second simulation goes one deeper.
+    // sim 1: leaf L1 = child 4 of the root, v = -0.5, r = 0.6.
+    //        L1: N 1, sum -0.5. Root: += r(L1) - (-0.5) = 1.1.
+    // sim 2: root -> L1 -> L2 (L1's children have uniform priors: action 0).
+    //        L2: N 1, sum -0.5.
+    //        L1: += r(L2) - v(L2) = 0.6 + 0.5 = 1.1 -> N 2, sum 0.6, mean 0.3.
+    //        Root: += r(L1) - 1.1 = -0.5 -> N 2, sum 0.6, mean 0.3.
+    //        Root edge Q = r(L1) - mean(L1) = 0.6 - 0.3 = 0.3.
+    // The Q values seen: 1.1 (sim 1's edge, and L2's edge), 0.3: hi = 1.1.
+    MctsConfig cfg;
+    cfg.simulations = 1;
+    Search one(cfg, kDims);
+    Rng rng(1);
+    SearchResult r = searchFrom(one, *session, logits, {4}, false, rng);
+    std::vector<RootEdge> e = one.rootEdges();
+    assert(e.size() == 1 && e[0].visits == 1);
+    assert(near(e[0].meanValue, -0.5f) && near(e[0].q, 1.1f));   // Q = r - v_child
+    assert(near(r.rootValue, 1.1f));
+
+    cfg.simulations = 2;
+    Search two(cfg, kDims);
+    r = searchFrom(two, *session, logits, {4}, false, rng);
+    e = two.rootEdges();
+    assert(e[0].visits == 2 && near(e[0].meanValue, 0.3f) && near(e[0].q, 0.3f));
+    assert(near(r.rootValue, 0.3f) && r.maxDepth == 2);
+    assert(near(two.minMaxStats().hi(), 1.1f) && two.minMaxStats().lo() == -1.0f);
+
+    // A full search over every action: the range widened above 1, and every
+    // visited root edge's normalized Q stays inside [0, 1].
+    std::vector<int> all;
+    for (int a = 0; a < kActions; ++a) all.push_back(a);
+    cfg.simulations = 60;
+    Search wide(cfg, kDims);
+    searchFrom(wide, *session, logits, all, false, rng);
+    const MinMaxStats& mm = wide.minMaxStats();
+    assert(mm.hi() > 1.0f);
+    int visited = 0;
+    for (const RootEdge& edge : wide.rootEdges()) {
+        if (edge.visits == 0) continue;
+        ++visited;
+        const float q = mm.normalize(edge.q);
+        assert(q >= 0.0f && q <= 1.0f);
+    }
+    assert(visited >= 2);
+    std::printf("test_rewards_and_minmax_widening passed\n");
+}
+
 static void test_root_masking() {
     // The model loves action 1, which is illegal at the root.
     FakeModel model(kDims, 1, nullptr, [](const float*, int, FakeOutput& o) { o.logits[1] = 5.0f; });
@@ -314,6 +373,7 @@ int main() {
     test_minmax();
     test_ucb_hand_computed();
     test_backup_signs();
+    test_rewards_and_minmax_widening();
     test_root_masking();
     test_single_legal_root();
     test_noise();
