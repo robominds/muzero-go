@@ -260,21 +260,28 @@ rewrites stale numbers.
 ## Results
 
 Measurements are reported in [`docs/results.md`](docs/results.md), failures
-included. In short, from three 5×5 runs:
+included. In short, from four 5×5 runs (the first three before the
+batch-norm fix, the fourth after it):
 
 - **Without a reward head** (the paper's Appendix G reading for board games,
   and the original default), the move that ends the game is worth about 0
   to the search, whatever the score. A winning pass got no visits.
 - **With komi 24.5 on 5×5**, Black never won a self-play game from a cold
   start, and its policy collapsed to passing.
-- **With the reward head and komi 0.5**, generation 40 beats its own earlier
-  generations (0.68–0.88 over 40 games) but loses to the random bot (0.33)
-  and the rollout bot (0.10). Its search values go above 1, so it prefers
-  playing on to ending a won game.
+- **With the reward head and komi 0.5, before the fix** (batch norm then
+  kept one set of running statistics for all unroll steps), generation 40
+  lost to the random bot (0.33) and to the rollout bot (0.10).
+- **The same run on the fixed code** (statistics per unroll step, capped
+  games truncated): generation 40 beats the random bot (0.79 over 200
+  games), beats its own generations 5–30 (0.75–1.00 over 40 games), and
+  still loses to the rollout bot (0.06 over 200). Its search values still
+  go above 1 just after a pass, because the model's value after the
+  game-ending edge is not 0. A winning pass with a low prior is never
+  visited.
 
-`reward_head = true` is therefore set in both presets. The 9×9 run (reward
-head on) is in progress. The head-to-head with `alphazero-go` will follow
-it.
+`reward_head = true` is therefore set in both presets. The 9×9 run
+(`runs/9x9-s1`, reward head on, fixed code) is in progress. The
+head-to-head with `alphazero-go` will follow it.
 
 Measured so far, with `mzgo_bench` for the 9×9 preset network (6 + 6
 blocks, 64 filters, BLAS) on a Mac Studio (M5 Max) while another training

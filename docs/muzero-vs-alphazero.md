@@ -121,14 +121,18 @@ sees the loss and prefers to capture first.
 
 `muzero-go` can only know what the reward head was trained on. Its reward
 targets come from self-play endings, and in self-play few passes are
-answered by a pass (78 of 473 in the recorded 5×5 reward-head games). An
+answered by a pass (78 of 473 in the recorded games of the 5×5 reward-head
+run before the batch norm fix, 73 of 268 in the run after it). An
 ending with invading stones still on the board may be rare or absent in
 that data. Against an opponent that keeps invading (the random bot does),
 nothing forces the model's idea of "a pass now wins" to match what the real
 count says. This is a hypothesis, not a measurement. In the positions
-examined in `docs/results.md`, the real count favoured the model and the
-model *under*-rated the pass, and it ranked moves that keep the game going
-at values above 1. The general point stands either way. AlphaZero's search
+examined in `docs/results.md`, the real count favoured the model. Before
+the fix, the model *under*-rated the pass and ranked moves that keep the
+game going at values above 1. After it, the model rates the pass about as
+high as playing on, and values above 1 remain on both. The one position
+built to test the hypothesis gave the pass no visits, so it tested
+nothing. The general point stands either way. AlphaZero's search
 scores the real terminal position, while MuZero's reward head scores the
 terminal positions it has seen, and the two agree only where self-play
 covered the case.

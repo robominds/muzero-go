@@ -538,7 +538,8 @@ Q̄ = (Q + 1) / 2. (With the reward head, which the presets turn on, r − v
 can reach ±2, and the range grows as such values appear. A real game's
 return never goes above 1, so a Q above 1 means the model's rewards and
 values disagree with the absorbing-state targets; `docs/results.md` finds
-such values in the 5×5 reward-head run.)
+such values in both 5×5 reward-head runs, before and after the batch norm
+fix of chapter 08, in positions just after a pass.)
 
 **The unvisited child.** An edge nobody has visited has no Q. The
 pseudocode scores it 0 on the *normalized* scale — and Q̄ = 0 means Q = −1:
@@ -628,10 +629,12 @@ values are still recorded in each game, so a bootstrapped or Reanalyze
 target could be added later.
 
 **Absorbing states.** The unroll runs a fixed K steps, but a sample that
-starts near the end of a game runs out of moves. For t + k ≥ T the state
-lies past the end of the game, and the pseudocode treats it as *absorbing*:
-the game has ended, nothing more can happen, all future rewards are 0, so
-the value target is 0. The pseudocode's policy target there is empty, which
+starts near the end of a game runs out of moves. In a game the players
+ended with two passes, for t + k ≥ T the state lies past the end of the
+game, and the pseudocode treats it as *absorbing*: the game has ended,
+nothing more can happen, all future rewards are 0, so the value target is
+0. (A game the move cap cut off has no absorbing states; see *Truncated
+games* below.) The pseudocode's policy target there is empty, which
 leaves its loss undefined; this implementation masks the term
 (`policyMask = 0`). The pseudocode itself never unrolls far past the end:
 its `sample_batch` takes the actions `g.history[i:i+K]`, so an unroll near
@@ -678,15 +681,19 @@ generation 12 lost 1–39 to the reward-head run's generation 12. Both
 presets now set `reward_head = true`. The built-in default stays off, so
 older configs keep their meaning.
 
-The head is not the whole answer. With it, the 5×5 model beats its own
-earlier generations but loses to a random player. In the positions where
-it goes wrong, the search rates a move that keeps the game going at about
-+1.4, above anything a real result can be. It rates the pass that would end
-a won game at about +0.4. So the model plays on inside its own territory
-until it fills its own last eye. Those values above 1 were measured before
-the batch norm fix of chapter 08; the final review traced most of them to
-batch norm normalizing differently at inference than in training, and
-`docs/results.md` re-measures them.
+The head is not the whole answer. Before the batch norm fix of chapter 08,
+the 5×5 model with the head beat its own earlier generations but lost to a
+random player. In the positions where it went wrong, the search rated a
+move that kept the game going at about +1.4, above anything a real result
+can be, and the pass that would end a won game at about +0.4. So the model
+played on inside its own territory until it filled its own last eye. Re-run
+on the fixed code, the same setup beats the random player (0.79 over 200
+games) and rates that pass about as high as playing on. But values above 1
+remain just after a pass: the model's reward on the ending edge falls
+short of ±1, and its value after that edge is far from the target 0, so the
+two add to more than 1. And a winning pass with a low prior is still
+never visited, since an unvisited child counts as a loss (chapter 05).
+`docs/results.md` has the measurements.
 
 **Sampling.** A training batch picks positions uniformly over every
 position in the replay window, the paper's "states are sampled uniformly"
