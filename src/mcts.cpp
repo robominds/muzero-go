@@ -222,11 +222,12 @@ std::vector<PvStep> Search::principalVariation(int maxLen) const {
     return pv;
 }
 
-SearchResult runSearch(Search& search, ModelSession& session, const Game& game, int history, Rng& rng) {
+SearchResult runSearch(Search& search, ModelSession& session, const Game& game, int history, bool passPlane,
+                       Rng& rng) {
     assert(!game.isTerminal());
     const int n = game.size();
-    std::vector<float> obs(static_cast<size_t>(numPlanes(history)) * n * n);
-    encodeGame(game, history, 0, obs.data());
+    std::vector<float> obs(static_cast<size_t>(numPlanes(history, passPlane)) * n * n);
+    encodeGame(game, history, 0, obs.data(), passPlane);
     ModelOutput root, step;
     session.initialInference(obs.data(), 1, root);
     const bool previousMoveWasPass = !game.moves().empty() && game.moves().back() == game.board().passAction();

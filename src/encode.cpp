@@ -8,16 +8,16 @@
 
 namespace mzgo {
 
-int numPlanes(int history) {
-    return 2 * history + 2;
+int numPlanes(int history, bool passPlane) {
+    return 2 * history + 2 + (passPlane ? 1 : 0);
 }
 
 void encodePlanes(const std::vector<const uint8_t*>& stones, int n, Color toMove,
-                  int H, int sym, float* out) {
+                  int H, int sym, float* out, bool passPlane, bool lastMovePass) {
     assert(n >= kMinBoardSize && n <= kMaxBoardSize);
     assert(H >= 1);
     const int area = n * n;
-    std::fill(out, out + static_cast<size_t>(numPlanes(H)) * area, 0.0f);
+    std::fill(out, out + static_cast<size_t>(numPlanes(H, passPlane)) * area, 0.0f);
 
     // Where each point lands under the symmetry, computed once per call.
     std::array<int, kMaxBoardSize * kMaxBoardSize> dest;
@@ -41,9 +41,15 @@ void encodePlanes(const std::vector<const uint8_t*>& stones, int n, Color toMove
     const int colorPlane = 2 * H + (toMove == Color::Black ? 0 : 1);
     float* plane = out + static_cast<size_t>(colorPlane) * area;
     std::fill(plane, plane + area, 1.0f);
+    // Plane 2H + 2 (optional): the move that led here was a pass.
+    if (passPlane && lastMovePass) {
+        float* pp = out + static_cast<size_t>(2 * H + 2) * area;
+        std::fill(pp, pp + area, 1.0f);
+    }
 }
 
-void encodeBoards(const std::vector<const Board*>& history, int H, int sym, float* out) {
+void encodeBoards(const std::vector<const Board*>& history, int H, int sym, float* out, bool passPlane,
+                  bool lastMovePass) {
     assert(!history.empty());
     const int n = history[0]->size();
     const int area = n * n;
@@ -56,15 +62,15 @@ void encodeBoards(const std::vector<const Board*>& history, int H, int sym, floa
         history[static_cast<size_t>(k)]->exportStones(dst);
         stones[static_cast<size_t>(k)] = dst;
     }
-    encodePlanes(stones, n, history[0]->toMove(), H, sym, out);
+    encodePlanes(stones, n, history[0]->toMove(), H, sym, out, passPlane, lastMovePass);
 }
 
-void encodeGame(const Game& game, int H, int sym, float* out) {
+void encodeGame(const Game& game, int H, int sym, float* out, bool passPlane) {
     std::vector<const Board*> history;
     for (int k = 0; k < H && k <= game.moveCount(); ++k) {
         history.push_back(&game.boardAt(game.moveCount() - k));
     }
-    encodeBoards(history, H, sym, out);
+    encodeBoards(history, H, sym, out, passPlane, game.consecutivePasses() > 0);
 }
 
 } // namespace mzgo

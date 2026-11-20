@@ -60,14 +60,15 @@ GameRecord recordFromGame(const Game& finished, const std::vector<float>& polici
                           const std::vector<float>& rootValues);
 
 // Network input for position p (p <= T) with `history` boards of history and
-// symmetry `sym`; identical to encodeGame on the same position.
-void encodeRecordPosition(const GameRecord&, int p, int history, int sym, float* out);
+// symmetry `sym`; identical to encodeGame on the same position (including the
+// optional pass plane, set iff move p-1 was a pass).
+void encodeRecordPosition(const GameRecord&, int p, int history, int sym, float* out, bool passPlane = false);
 
 // Fills sample b of `batch` from position t (0 <= t < T) of the record.
-// The batch must have been resize()d for K, numPlanes(history), area, actions.
+// The batch must have been resize()d for K, numPlanes(history, passPlane), area, actions.
 // Policy entries and actions are moved by symmetry `sym`; `rng` supplies the
 // random actions past the end of the game.
-void fillSample(const GameRecord&, int t, int K, int history, int sym, Rng& rng,
+void fillSample(const GameRecord&, int t, int K, int history, bool passPlane, int sym, Rng& rng,
                 TrainBatch& batch, int b);
 
 } // namespace mzgo

@@ -10,9 +10,10 @@
 
 namespace mzgo {
 
-// Format: magic "MZGN" (u32 0x4E475A4D, bytes 'M' 'Z' 'G' 'N'), u32 version 2,
-// NetConfig as 8 x i32 (boardSize, history, reprBlocks, dynBlocks, filters,
-// valueHidden, rewardHead 0/1, unrollSteps), u32 tensor count, then per
+// Format: magic "MZGN" (u32 0x4E475A4D, bytes 'M' 'Z' 'G' 'N'), u32 version 3,
+// NetConfig as 9 x i32 (boardSize, history, reprBlocks, dynBlocks, filters,
+// valueHidden, rewardHead 0/1, unrollSteps, passPlane 0/1; version 2 files
+// have the first 8 only and load with passPlane off), u32 tensor count, then per
 // tensor: name (str), u64 size, floats. Params in params() order, then
 // buffers in buffers() order, one runMean and runVar per batch norm and
 // unroll step ("dyn.block0.bn1.runMean.k3"). Version 1 (one set of batch

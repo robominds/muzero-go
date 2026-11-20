@@ -52,7 +52,7 @@ static void test_uniform_positions() {
     Rng rng(7);
     const int B = 40000;
     TrainBatch out;
-    buf.sampleBatch(B, 1, 1, false, rng, out);
+    buf.sampleBatch(B, 1, 1, false, false, rng, out);
     assert(out.B == B && out.K == 1);
     int fromLong = 0;
     for (int b = 0; b < B; ++b) fromLong += argmax0(out, b) == 2;
@@ -62,8 +62,8 @@ static void test_uniform_positions() {
     // Same seed -> identical batch (determinism), augmentation included.
     TrainBatch x, y;
     Rng r1(99), r2(99);
-    buf.sampleBatch(64, 3, 2, true, r1, x);
-    buf.sampleBatch(64, 3, 2, true, r2, y);
+    buf.sampleBatch(64, 3, 2, false, true, r1, x);
+    buf.sampleBatch(64, 3, 2, false, true, r2, y);
     assert(x.observations == y.observations && x.actions == y.actions &&
            x.policyTargets == y.policyTargets && x.valueTargets == y.valueTargets);
     std::printf("test_uniform_positions ok (long share %.4f)\n", share);
@@ -79,7 +79,7 @@ static void test_capacity() {
     // After dropping, sampling only sees the remaining games (prefix sums recomputed).
     Rng rng(5);
     TrainBatch out;
-    buf.sampleBatch(2000, 1, 1, false, rng, out);
+    buf.sampleBatch(2000, 1, 1, false, false, rng, out);
     for (int b = 0; b < 2000; ++b) assert(argmax0(out, b) != 1);
     std::printf("test_capacity ok\n");
 }

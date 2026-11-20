@@ -27,27 +27,28 @@ GameRecord recordFromGame(const Game& finished, const std::vector<float>& polici
     return r;
 }
 
-void encodeRecordPosition(const GameRecord& g, int p, int history, int sym, float* out) {
+void encodeRecordPosition(const GameRecord& g, int p, int history, int sym, float* out, bool passPlane) {
     assert(p >= 0 && p <= g.length());
     const int area = g.area();
     std::vector<const uint8_t*> stones;
     for (int k = 0; k < history && k <= p; ++k) {
         stones.push_back(g.stones.data() + static_cast<size_t>(p - k) * area);
     }
-    encodePlanes(stones, g.boardSize, g.toMoveAt(p), history, sym, out);
+    const bool lastMovePass = p > 0 && g.moves[static_cast<size_t>(p - 1)] == g.area();
+    encodePlanes(stones, g.boardSize, g.toMoveAt(p), history, sym, out, passPlane, lastMovePass);
 }
 
-void fillSample(const GameRecord& g, int t, int K, int history, int sym, Rng& rng,
+void fillSample(const GameRecord& g, int t, int K, int history, bool passPlane, int sym, Rng& rng,
                 TrainBatch& batch, int b) {
     const int T = g.length();
     const int n = g.boardSize;
     const int A = g.numActions();
-    const int planes = numPlanes(history);
+    const int planes = numPlanes(history, passPlane);
     assert(t >= 0 && t < T);
     assert(batch.K == K && b >= 0 && b < batch.B);
 
     encodeRecordPosition(g, t, history, sym,
-                         batch.observations.data() + static_cast<size_t>(b) * planes * g.area());
+                         batch.observations.data() + static_cast<size_t>(b) * planes * g.area(), passPlane);
 
     for (int k = 0; k < K; ++k) {
         const int a = (t + k < T) ? g.moves[t + k] : rng.below(A);

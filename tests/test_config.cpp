@@ -60,7 +60,14 @@ static void test_override() {
     assert(c.simulations == 50);
     applyOverride(c, " reward_head = true ");
     assert(c.rewardHead);
-    assert(architectureKeys().size() == 8);   // unroll_steps among them (per-step batch norm statistics)
+    assert(!c.passPlane);
+    applyOverride(c, "pass_plane = true");
+    assert(c.passPlane);
+    assert(parseConfigString(configToString(c)).passPlane);
+    bool listed = false;
+    for (const std::string& k : architectureKeys()) listed = listed || k == "pass_plane";
+    assert(listed);
+    assert(architectureKeys().size() == 9);   // unroll_steps among them (per-step batch norm statistics)
     std::printf("test_override passed\n");
 }
 

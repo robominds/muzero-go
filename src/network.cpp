@@ -14,7 +14,7 @@ namespace mzgo {
 bool NetConfig::operator==(const NetConfig& o) const {
     return boardSize == o.boardSize && history == o.history && reprBlocks == o.reprBlocks &&
            dynBlocks == o.dynBlocks && filters == o.filters && valueHidden == o.valueHidden &&
-           rewardHead == o.rewardHead && unrollSteps == o.unrollSteps;
+           rewardHead == o.rewardHead && passPlane == o.passPlane && unrollSteps == o.unrollSteps;
 }
 
 namespace {
@@ -421,6 +421,8 @@ NetworkModel::NetworkModel(const MuZeroNetwork& net, const Backend& backend) : n
 ModelDims NetworkModel::dims() const { return ModelDims{net_.config().boardSize, net_.config().filters}; }
 
 int NetworkModel::history() const { return net_.config().history; }
+
+bool NetworkModel::passPlane() const { return net_.config().passPlane; }
 
 std::unique_ptr<ModelSession> NetworkModel::newSession(int maxBatch) const {
     return std::make_unique<NetworkSession>(net_, backend_, maxBatch);

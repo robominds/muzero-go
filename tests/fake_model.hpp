@@ -53,6 +53,9 @@ public:
 
     ModelDims dims() const override { return dims_; }
     int history() const override { return history_; }
+    bool passPlane() const override { return passPlane_; }
+    // Observations then carry numPlanes(history, true) planes (default off).
+    FakeModel& withPassPlane(bool on = true) { passPlane_ = on; return *this; }
     std::unique_ptr<ModelSession> newSession(int maxBatch) const override {
         return std::make_unique<Session>(*this, maxBatch);
     }
@@ -78,7 +81,7 @@ private:
         Session(const FakeModel& m, int maxBatch) : m_(m), maxBatch_(maxBatch) {}
 
         void initialInference(const float* observations, int B, ModelOutput& out) override {
-            const int obsSize = numPlanes(m_.history_) * m_.dims_.area();
+            const int obsSize = numPlanes(m_.history_, m_.passPlane_) * m_.dims_.area();
             run(B, out, [&](int b, FakeOutput& o) {
                 const float* obs = observations + static_cast<size_t>(b) * obsSize;
                 fillHidden(hashFloats(obs, obsSize), m_.dims_.hiddenSize(), o.hidden.data());
@@ -130,6 +133,7 @@ private:
 
     ModelDims dims_;
     int history_;
+    bool passPlane_ = false;
     RootHook root_;
     StepHook step_;
 };

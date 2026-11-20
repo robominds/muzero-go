@@ -1,4 +1,5 @@
 // Copied from alphazero-go (Mark Castelluccio), adapted for mzgo.
+#include <algorithm>
 #include <cassert>
 #include <cstdio>
 #include <vector>
@@ -17,10 +18,10 @@ static std::vector<float> encodeB(const std::vector<const Board*>& history, int 
     return out;
 }
 
-static std::vector<float> encodeG(const Game& g, int H, int sym) {
+static std::vector<float> encodeG(const Game& g, int H, int sym, bool passPlane = false) {
     const int n = g.size();
-    std::vector<float> out(static_cast<size_t>(numPlanes(H)) * n * n, -1.0f);
-    encodeGame(g, H, sym, out.data());
+    std::vector<float> out(static_cast<size_t>(numPlanes(H, passPlane)) * n * n, -1.0f);
+    encodeGame(g, H, sym, out.data(), passPlane);
     return out;
 }
 
@@ -137,7 +138,58 @@ static void test_symmetry_consistency() {
     assert(encodeG(g, H, 1) != base);
 }
 
+static void test_pass_plane() {
+    const int H = 3, n = 5, P = numPlanes(H), pass = n * n;
+    assert(numPlanes(H, false) == 2 * H + 2 && numPlanes(H, true) == 2 * H + 3);
+    assert(numPlanes(1, true) == 5 && numPlanes(8, true) == 19);
+
+    Game g(n, 7.5f, defaultMaxMoves(n));
+    // Move 0: no move led here, so 0.
+    std::vector<float> e = encodeG(g, H, 0, true);
+    assert(e.size() == static_cast<size_t>(P + 1) * n * n);
+    assert(planeIs(e, P, {}));
+    g.play(pt(1, 1));
+    assert(planeIs(encodeG(g, H, 0, true), P, {}));    // after a stone move
+    g.play(pass);
+    assert(planeIs(encodeG(g, H, 0, true), P, all()));  // after one pass
+    g.play(pass);                                       // two passes end the game
+    assert(planeIs(encodeG(g, H, 0, true), P, all()));  // after two passes
+    // A stone move after a pass clears it again.
+    Game h(n, 7.5f, defaultMaxMoves(n));
+    h.play(pass);
+    assert(planeIs(encodeG(h, H, 0, true), P, all()));
+    h.play(pt(2, 2));
+    assert(planeIs(encodeG(h, H, 0, true), P, {}));
+
+    // Enabling it changes no other plane, and disabled output is exactly the old layout.
+    for (const Game* game : {&g, &h}) {
+        const std::vector<float> off = encodeG(*game, H, 0, false), on = encodeG(*game, H, 0, true);
+        assert(off.size() == static_cast<size_t>(P) * n * n);
+        assert(std::equal(off.begin(), off.end(), on.begin()));
+    }
+
+    // Invariant under every symmetry, on the pass plane and the rest.
+    for (int s = 0; s < kNumSymmetries; ++s) {
+        const std::vector<float> t = encodeG(g, H, s, true);
+        assert(planeIs(t, P, all()));
+        const std::vector<float> base = encodeG(g, H, s, false);
+        assert(std::equal(base.begin(), base.end(), t.begin()));
+        assert(planeIs(encodeG(h, H, s, true), P, {}));
+    }
+
+    // encodeBoards / encodePlanes take lastMovePass directly.
+    Board b(n);
+    std::vector<const Board*> hist = {&b};
+    std::vector<float> out(static_cast<size_t>(numPlanes(H, true)) * n * n, -1.0f);
+    encodeBoards(hist, H, 0, out.data(), true, true);
+    assert(planeIs(out, P, all()));
+    encodeBoards(hist, H, 0, out.data(), true, false);
+    assert(planeIs(out, P, {}));
+    std::printf("test_pass_plane passed\n");
+}
+
 int main() {
+    test_pass_plane();
     test_plane_counts();
     test_own_and_opponent_swap_with_side_to_move();
     test_missing_history_is_zero();

@@ -74,12 +74,55 @@ static void test_record_from_game() {
     std::printf("test_record_from_game ok\n");
 }
 
+// With the pass plane on, encodeRecordPosition == encodeGame at every
+// position of games with passes: at move 0, mid-game, and a final double pass.
+static void test_record_pass_plane() {
+    const int H = 2, planes = numPlanes(H, true);
+    const int pass = N * N;
+    const std::vector<std::vector<int>> games = {
+        {pass, 0, pass, 12, 6, pass, pass},   // pass at move 0, mid-game passes, final double pass
+        {0, pass, pass},
+        {0, 24, 12, 18},                      // no passes
+    };
+    for (const std::vector<int>& mv : games) {
+        Game g(N, 0.5f, defaultMaxMoves(N));
+        for (int m : mv) g.play(m);
+        const int T = g.moveCount();
+        std::vector<float> pol(static_cast<size_t>(T) * A, 0.0f), rv(T, 0.0f);
+        for (int p = 0; p < T; ++p) pol[static_cast<size_t>(p) * A + g.moves()[p]] = 1.0f;
+        const GameRecord r = recordFromGame(g, pol, rv);
+        for (int p = 0; p <= T; ++p) {
+            Game replay(N, 0.5f, defaultMaxMoves(N));
+            for (int i = 0; i < p; ++i) replay.play(r.moves[i]);
+            for (int sym : {0, 3, 5}) {
+                std::vector<float> a(planes * N * N, -1.0f), b(planes * N * N, -2.0f);
+                encodeGame(replay, H, sym, a.data(), true);
+                encodeRecordPosition(r, p, H, sym, b.data(), true);
+                assert(a == b);
+                const float want = (p > 0 && mv[p - 1] == pass) ? 1.0f : 0.0f;
+                assert(b[static_cast<size_t>(planes - 1) * N * N] == want);
+            }
+        }
+    }
+    // fillSample writes numPlanes(H, true) planes per observation.
+    GameRecord r = handRecord(8, 1.0f, true);
+    TrainBatch tb;
+    tb.resize(1, 2, numPlanes(H, true), N * N, A);
+    Rng rng(3);
+    fillSample(r, 7, 2, H, true, 0, rng, tb, 0);   // position 7 follows a pass (moves 6 and 7 are passes)
+    std::vector<float> want(planes * N * N, -1.0f);
+    encodeRecordPosition(r, 7, H, 0, want.data(), true);
+    assert(tb.observations == want);
+    assert(want[static_cast<size_t>(planes - 1) * N * N] == 1.0f);
+    std::printf("test_record_pass_plane ok\n");
+}
+
 static void test_targets_signs() {
     GameRecord r = handRecord(8, 1.0f, false);   // Black won (at the cap; t + K < T)
     Rng rng(1);
     TrainBatch b;
     b.resize(1, 4, numPlanes(2), N * N, A);
-    fillSample(r, 0, 4, 2, 0, rng, b, 0);
+    fillSample(r, 0, 4, 2, false, 0, rng, b, 0);
     for (int k = 0; k <= 4; ++k) {
         assert(b.valueTargets[k] == (k % 2 == 0 ? 1.0f : -1.0f));
         assert(b.policyMask[k] == 1.0f && b.valueMask[k] == 1.0f && b.rewardMask[k] == 1.0f);
@@ -97,7 +140,7 @@ static void test_short_game_padding() {
     const int K = 5, t = 1;
     TrainBatch b;
     b.resize(1, K, numPlanes(1), N * N, A);
-    fillSample(r, t, K, 1, 0, rng, b, 0);
+    fillSample(r, t, K, 1, false, 0, rng, b, 0);
     for (int k = 0; k <= K; ++k) {
         const int p = t + k;
         if (p < 3) {
@@ -124,7 +167,7 @@ static void test_symmetry_consistency() {
     const int t = 2, K = 2, sym = 3;
     TrainBatch b;
     b.resize(1, K, numPlanes(2), N * N, A);
-    fillSample(r, t, K, 2, sym, rng, b, 0);
+    fillSample(r, t, K, 2, false, sym, rng, b, 0);
     for (int k = 0; k < K; ++k) assert(b.actions[k] == transformAction(sym, r.moves[t + k], N));
     int arg = 0;
     for (int a = 0; a < A; ++a) if (b.policyTargets[a] > b.policyTargets[arg]) arg = a;
@@ -146,7 +189,7 @@ static void test_capped_game_truncated() {
     const int K = 5, t = 3;
     TrainBatch b;
     b.resize(1, K, numPlanes(1), N * N, A);
-    fillSample(r, t, K, 1, 0, rng, b, 0);
+    fillSample(r, t, K, 1, false, 0, rng, b, 0);
     for (int k = 0; k <= K; ++k) {
         const int p = t + k;
         if (k >= 1) assert(b.rewardTargets[k] == 0.0f);
@@ -178,6 +221,7 @@ static void test_ended_by_passes() {
 
 int main() {
     test_record_from_game();
+    test_record_pass_plane();
     test_targets_signs();
     test_short_game_padding();
     test_symmetry_consistency();

@@ -145,6 +145,7 @@ private:
 
 // Convenience for one game, batch 1: begin + loop of select/recurrentInference/expand.
 // Asserts !game.isTerminal().
-SearchResult runSearch(Search&, ModelSession&, const Game& game, int history, Rng& rng);
+SearchResult runSearch(Search&, ModelSession&, const Game& game, int history, bool passPlane,
+                       Rng& rng);
 
 } // namespace mzgo

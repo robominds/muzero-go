@@ -41,6 +41,7 @@ public:
     virtual ~Model() = default;
     virtual ModelDims dims() const = 0;
     virtual int history() const = 0;   // H for the observation planes
+    virtual bool passPlane() const = 0;   // observations carry the "last move was a pass" plane (encode.hpp)
     virtual std::unique_ptr<ModelSession> newSession(int maxBatch) const = 0;
 };
 

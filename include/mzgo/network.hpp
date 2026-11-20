@@ -56,8 +56,9 @@ class ThreadPool;   // mzgo/parallel.hpp
 struct NetConfig {
     int boardSize = 9, history = 8, reprBlocks = 6, dynBlocks = 6, filters = 64, valueHidden = 64;
     bool rewardHead = false;
+    bool passPlane = false;   // extra input plane: the last move was a pass (encode.hpp)
     int unrollSteps = 5;   // K the batch norm statistics are kept for (see the top of this file)
-    int planes() const { return 2 * history + 2; }      // observation planes (encode.hpp)
+    int planes() const { return 2 * history + 2 + (passPlane ? 1 : 0); }      // observation planes (encode.hpp)
     int area() const { return boardSize * boardSize; }
     int actions() const { return area() + 1; }           // every point, plus pass
     int hiddenSize() const { return filters * area(); }  // one sample's hidden state, [filters][area]
@@ -183,6 +184,7 @@ public:
     NetworkModel(const MuZeroNetwork& net, const Backend& backend);
     ModelDims dims() const override;
     int history() const override;
+    bool passPlane() const override;
     std::unique_ptr<ModelSession> newSession(int maxBatch) const override;
 private:
     const MuZeroNetwork& net_;

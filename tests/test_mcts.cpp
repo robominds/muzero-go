@@ -282,6 +282,33 @@ static void test_noise() {
     std::printf("test_noise passed\n");
 }
 
+static void test_root_observation_pass_plane() {
+    // The root observation passed to the model has the pass plane when the model asks for it.
+    const int H = 2;
+    float lastPlane = -1.0f;
+    size_t planesSeen = 0;
+    FakeModel model(kDims, H, [&](const float* obs, FakeOutput&) {
+        const int area = kDims.area();
+        planesSeen = static_cast<size_t>(numPlanes(H, true));
+        lastPlane = obs[static_cast<size_t>(2 * H + 2) * area];
+    });
+    model.withPassPlane();
+    assert(model.passPlane());
+    auto session = model.newSession(1);
+    MctsConfig cfg;
+    cfg.simulations = 2;
+    Rng rng(1);
+    Game g(3, 0.5f, defaultMaxMoves(3));
+    Search s(cfg, kDims);
+    runSearch(s, *session, g, model.history(), model.passPlane(), rng);
+    assert(planesSeen == 7 && lastPlane == 0.0f);
+    g.play(kPass);
+    Search s2(cfg, kDims);
+    runSearch(s2, *session, g, model.history(), model.passPlane(), rng);
+    assert(lastPlane == 1.0f);
+    std::printf("test_root_observation_pass_plane passed\n");
+}
+
 static void test_past_end_fraction() {
     // Pass is the model's clear favourite, at the root and below.
     auto passy = [](FakeOutput& o) { o.logits[kPass] = 10.0f; };
@@ -295,7 +322,7 @@ static void test_past_end_fraction() {
     afterPass.play(kPass);                   // a further pass would end the real game
     Search s(cfg, kDims);
     Rng rng(1);
-    SearchResult r = runSearch(s, *session, afterPass, model.history(), rng);
+    SearchResult r = runSearch(s, *session, afterPass, model.history(), model.passPlane(), rng);
     assert(r.pastEndFraction > 0.5f);
 
     // Only a path that goes on BEYOND a double pass counts; a leaf that is
@@ -305,16 +332,16 @@ static void test_past_end_fraction() {
     // (one step beyond it: counted).
     cfg.simulations = 1;
     Search one(cfg, kDims);
-    r = runSearch(one, *session, afterPass, model.history(), rng);
+    r = runSearch(one, *session, afterPass, model.history(), model.passPlane(), rng);
     assert(r.visits[kPass] == 1 && r.pastEndFraction == 0.0f && r.maxDepth == 1);
     cfg.simulations = 2;
     Search two(cfg, kDims);
-    r = runSearch(two, *session, afterPass, model.history(), rng);
+    r = runSearch(two, *session, afterPass, model.history(), model.passPlane(), rng);
     assert(r.visits[kPass] == 2 && r.pastEndFraction == 0.5f && r.maxDepth == 2);
     // At the start of a game the same two simulations reach the double pass
     // (root -> pass -> pass) but never go past it.
     Game fresh(3, 0.5f, defaultMaxMoves(3));
-    r = runSearch(two, *session, fresh, model.history(), rng);
+    r = runSearch(two, *session, fresh, model.history(), model.passPlane(), rng);
     assert(r.visits[kPass] == 2 && r.pastEndFraction == 0.0f && r.maxDepth == 2);
     std::printf("test_past_end_fraction passed\n");
 }
@@ -337,8 +364,8 @@ static void test_determinism() {
 
     Search a(cfg, kDims), b(cfg, kDims);
     Rng ra(7), rb(7);
-    SearchResult x = runSearch(a, *session, g, model.history(), ra);
-    SearchResult y = runSearch(b, *session, g, model.history(), rb);
+    SearchResult x = runSearch(a, *session, g, model.history(), model.passPlane(), ra);
+    SearchResult y = runSearch(b, *session, g, model.history(), model.passPlane(), rb);
     assert(x.visits == y.visits && x.rootValue == y.rootValue);
     assert(x.maxDepth == y.maxDepth && x.meanDepth == y.meanDepth);
     assert(a.selectMove(x, true, ra) == b.selectMove(y, true, rb));
@@ -348,7 +375,7 @@ static void test_determinism() {
 
     // The same Search object, reused: beginRoot clears the old tree.
     Rng rc(7);
-    SearchResult z = runSearch(a, *session, g, model.history(), rc);
+    SearchResult z = runSearch(a, *session, g, model.history(), model.passPlane(), rc);
     assert(z.visits == x.visits && z.rootValue == x.rootValue);
     std::printf("test_determinism passed\n");
 }
@@ -379,6 +406,7 @@ static void test_select_move() {
 }
 
 int main() {
+    test_root_observation_pass_plane();
     test_minmax();
     test_ucb_hand_computed();
     test_backup_signs();

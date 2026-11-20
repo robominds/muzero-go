@@ -111,6 +111,7 @@ NetConfig netConfigFrom(const RunConfig& c) {
     n.filters = c.filters;
     n.valueHidden = c.valueHidden;
     n.rewardHead = c.rewardHead;
+    n.passPlane = c.passPlane;
     n.unrollSteps = c.unrollSteps;
     return n;
 }
@@ -250,7 +251,7 @@ void Trainer::calibrateBatchNorm() {
     }
     TrainBatch batch;
     Rng rng(deriveSeed(cfg_.seed, 0xCA1, 1));
-    buffer.sampleBatch(cfg_.batchSize, cfg_.unrollSteps, cfg_.history, false, rng, batch);
+    buffer.sampleBatch(cfg_.batchSize, cfg_.unrollSteps, cfg_.history, cfg_.passPlane, false, rng, batch);
     net_->calibrateBatchNorm(*workspace_, batch);
 }
 
@@ -313,7 +314,7 @@ void Trainer::runGeneration() {
     TrainBatch batch;
     for (int s = 1; s <= cfg_.trainSteps; ++s) {
         Rng rng(deriveSeed(cfg_.seed, static_cast<uint64_t>(g), 2, static_cast<uint64_t>(s)));
-        replay_.sampleBatch(cfg_.batchSize, K, cfg_.history, cfg_.symmetryAugment, rng, batch);
+        replay_.sampleBatch(cfg_.batchSize, K, cfg_.history, cfg_.passPlane, cfg_.symmetryAugment, rng, batch);
         const float lr = exponentialLr(cfg_.lrInit, cfg_.lrDecayRate, cfg_.lrDecaySteps, globalStep_);
         const UnrollLoss loss = net_->trainStep(*workspace_, batch);
         if (!std::isfinite(loss.total))
