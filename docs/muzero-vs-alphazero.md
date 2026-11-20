@@ -97,11 +97,40 @@ model says about those states comes from the absorbing-state targets: past
 the end of a game the value target is 0 and the policy term is masked
 (`fillSample`, `src/game_record.cpp:40`). So, with no reward head, the edge
 that ends a game is worth Q ≈ 0 to the search — a draw — whatever the
-score; `alphazero-go` values the same pass at exactly ±1. The optional
-`reward_head` (off in both presets, as the paper omits the reward loss for
-board games) gives that edge the game's result as a reward. Self-play's
+score; `alphazero-go` values the same pass at exactly ±1. `reward_head`
+gives that edge the game's result as a reward. It is on in both presets: the
+paper's Appendix G omits the reward loss for board games, and that reading
+was measured to fail on 5×5 ([`docs/results.md`](results.md)). Self-play's
 `past_end_fraction` and `capped_games` columns in `log.csv` show how much
-this matters.
+of the search runs past the end.
+
+### Dead stones: a real terminal position versus a learned one
+
+Tromp-Taylor area scoring counts every stone on the board as alive. There
+is no agreement phase where the players remove dead stones. A stone the
+opponent could capture still counts for its owner if the game ends with it
+on the board, and it also stops the empty points around it from being
+anyone's territory. So under these rules a player who has invaded can be
+"winning" on the count until somebody captures the invaders.
+
+`alphazero-go` gets this right without being told. When its search reaches
+two passes it scores the real board, so a pass that leaves enemy stones
+inside its territory is scored with them there. If that loses, the search
+sees the loss and prefers to capture first.
+
+`muzero-go` can only know what the reward head was trained on. Its reward
+targets come from self-play endings, and in self-play few passes are
+answered by a pass (78 of 473 in the recorded 5×5 reward-head games). An
+ending with invading stones still on the board may be rare or absent in
+that data. Against an opponent that keeps invading (the random bot does),
+nothing forces the model's idea of "a pass now wins" to match what the real
+count says. This is a hypothesis, not a measurement. In the positions
+examined in `docs/results.md`, the real count favoured the model and the
+model *under*-rated the pass, and it ranked moves that keep the game going
+at values above 1. The general point stands either way. AlphaZero's search
+scores the real terminal position, while MuZero's reward head scores the
+terminal positions it has seen, and the two agree only where self-play
+covered the case.
 
 ## The first-play value
 
@@ -135,7 +164,7 @@ more closely and goes deeper along it. That suits a search whose prior is
 the only guard against illegal moves; it also means a strong move with a
 small prior is found later.
 
-The exploration weights differ too. The log term is below 0.01 for a few
+The exploration weights differ too. The log term is about 0.01 for a few
 hundred simulations, so MuZero's weight is 1.25 on a [0, 1] Q̄, which is
 the same as 2.5 on a [−1, 1] Q: about 1.7 times `alphazero-go`'s
 `c_puct = 1.5`.
@@ -211,7 +240,7 @@ the gradient into each hidden state after a recurrent step is halved
 | parameters | about 473,000 (the same layers as `h` + `f`) | 954,749 (`h` 454,400, `g` 481,472, `f` 18,877) |
 | forward per training sample | 1 trunk + heads | `h` + 5 `g` + 6 `f` |
 | network calls per simulation | 1 (trunk + heads); none at a terminal node | 1 (`g` + `f`), always |
-| optional extras | ownership head, gating, growing, GPU engines | reward head |
+| optional extras | ownership head, gating, growing, GPU engines | reward head (on in both presets) |
 
 A `muzero-go` training sample does roughly 5–6 times the work of an
 `alphazero-go` one, forward and backward. A search simulation costs about
@@ -239,7 +268,8 @@ Copied from `alphazero-go` and unchanged in behaviour:
 
 ## Measured
 
-Nothing is compared by measurement here yet. The head-to-head match through
+The 5×5 runs are measured in [`docs/results.md`](results.md). Nothing is
+compared with `alphazero-go` by measurement yet. The head-to-head match through
 GTP (`mzgo_gtp` against `alphazero-go`'s `gtp`, via `tools/gtp_match.py`) at
 matched settings, the matched `alphazero-go` run with resignation off, and
 timings of both on the same machine will be reported in

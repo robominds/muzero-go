@@ -40,9 +40,15 @@ static void test_presets_parse() {
     const std::string dir = std::string(MZGO_SOURCE_DIR) + "/configs/";
     RunConfig c5 = parseConfigFile(dir + "5x5.cfg");
     validate(c5);
-    assert(sameConfig(c5, RunConfig()));
+    // The presets turn the reward head on (docs/results.md); the struct
+    // default stays off so a config without the key keeps its old meaning.
+    assert(!RunConfig().rewardHead);
+    RunConfig expected5;
+    expected5.rewardHead = true;
+    assert(sameConfig(c5, expected5));
     RunConfig c9 = parseConfigFile(dir + "9x9.cfg");
     validate(c9);
+    assert(c9.rewardHead);
     assert(c9.boardSize == 9 && c9.filters == 64 && c9.dynBlocks == 6 && c9.reprBlocks == 6);
     assert(c9.komi == 7.5f && c9.batchSize == 256 && c9.lrDecaySteps == 60000 && c9.arenaTemperatureMoves == 4);
     std::printf("test_presets_parse passed\n");

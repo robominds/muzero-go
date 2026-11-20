@@ -112,13 +112,19 @@ feature maps (spatial, as in the paper, so actions can be planes).
   zero plane, with a single one in the position of the played stone. A pass
   is encoded as an all zero plane." So the input is `F + 1` planes. Stem
   conv + BN + ReLU to `F`, then `dyn_blocks` residual blocks, then
-  normalization. The paper omits the reward loss for board games (App. G:
-  "in board games without intermediate rewards, we omit the reward
-  prediction loss"); this implementation therefore has **no reward head by
-  default** and search uses r = 0. An optional reward head
-  (`reward_head = true`: the value head's shape, 1×1 conv → BN → ReLU → FC → ReLU → FC → tanh, reading the normalized sᵏ; trained on the
-  final outcome at the last move, 0 elsewhere) exists as an experiment
-  switch, off in both presets.
+  normalization. The paper is inconsistent about the reward for board
+  games: its §3 loss and the pseudocode's `update_weights` include the
+  reward term for every game, while App. G omits it ("in board games without
+  intermediate rewards, we omit the reward prediction loss"). The reward
+  head (`reward_head = true`: the value head's shape, 1×1 conv → BN → ReLU →
+  FC → ReLU → FC → tanh, reading the normalized sᵏ; trained on the final
+  outcome at the last move, 0 elsewhere) is **on in both presets**. Without
+  it, the game-ending move leads to an absorbing state with value target 0
+  and carries no reward, so the search values it at about 0 whatever the
+  score. Measured on 5×5 in `docs/results.md`: a winning pass got prior
+  0.028 and no visits, and the no-reward-head generation 12 lost 1–39 to
+  the reward-head generation 12. The struct default stays `false` (search
+  uses r = 0), so a config without the key keeps the App. G behaviour.
 - **Prediction f(sᵏ) → (pᵏ, vᵏ).** AlphaZero heads, no residual blocks of
   its own (paper: "one or two convolutional layers that ... reduce the
   number of planes" then a fully connected layer). Policy: 1×1 conv to 2
@@ -182,7 +188,10 @@ search simulation costs about one AlphaZero evaluation.
 ### Self-play and the game
 
 - Rules from `alphazero-go`: Tromp-Taylor area scoring, komi (5×5: 24.5 as
-  in `alphazero-go`'s 5×5 preset; 9×9: 7.5), suicide illegal, positional
+  in `alphazero-go`'s 5×5 preset — measured in `docs/results.md` to fail
+  from a cold start: Black wins only by owning all 25 points, never won a
+  recorded self-play game, and learned to pass; the later 5×5 runs use
+  `--set komi=0.5`; 9×9: 7.5), suicide illegal, positional
   superko, game ends on two consecutive passes or at `max_moves` (default
   2n²; at the cap the position is scored as it stands).
 - A stored game: observations are recomputed from the move list (the
@@ -276,7 +285,9 @@ architecture keys cannot change on resume.
 
 ### When the paper's version fails
 
-The paper's version is always the default. If it fails in a way that
+The paper's version is always the default (where the paper contradicts
+itself, as on the board-game reward loss, the presets take the reading that
+measured better; see Deviations, 10). If it fails in a way that
 stops learning (e.g. batch norm saturating at generation 0, as
 `alphazero-go` saw with deep uncalibrated networks; the unrolled dynamics
 diverging; the value collapsing), a stabilising change may be added as an
@@ -383,6 +394,10 @@ resume, then arena and GTP).
 8. Dirichlet α scaled with board area; temperature move count scaled.
 9. Any opt-in stabilising switch (default off), e.g. `bn_calibrate`; see
    "When the paper's version fails".
+10. The reward loss for board games: App. G omits it, §3 and the pseudocode
+    keep it. The presets follow §3 and the pseudocode (`reward_head = true`),
+    because App. G's reading was measured to fail (`docs/results.md`). It is
+    the one switch on by default in the presets.
 
 ## Left to the builder
 

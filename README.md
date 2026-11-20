@@ -67,14 +67,15 @@ Interrupt `mzgo_train` at any time and continue with
 `configs/5x5.cfg` and `configs/9x9.cfg`. Any key can be overridden with
 `--set key=value`. Defaults not listed: K = `unroll_steps` = 5, 200
 simulations, root Dirichlet α = `dirichlet_scale` / n² = 10 / n² at 25%,
-SGD momentum 0.9, weight decay 1e-4, no reward head, no symmetry
-augmentation, no batch norm calibration.
+SGD momentum 0.9, weight decay 1e-4, no symmetry augmentation, no batch
+norm calibration.
 
 | | 5×5 | 9×9 |
 |---|---|---|
 | komi | 24.5 | 7.5 |
 | `repr_blocks` / `dyn_blocks` × `filters` | 3 / 3 × 32 | 6 / 6 × 64 |
 | `value_hidden` | 32 | 64 |
+| `reward_head` | true | true |
 | `generations` | 60 | 150 |
 | `games_per_generation` | 200 | 200 |
 | `simulations` | 200 | 200 |
@@ -88,8 +89,11 @@ augmentation, no batch norm calibration.
 The 9×9 network matches `alphazero-go`'s 9×9 trunk (6 blocks × 64), so the
 two can be compared at matched settings. 5×5 uses komi 24.5 as in
 `alphazero-go`: 5×5 Go is a win for Black by the whole board, and at 7.5
-Black wins nearly every game. Checkpoints do not store komi; the programs
-below default to 24.5 on 5×5 and 7.5 otherwise.
+Black wins nearly every game. Measured here, 24.5 also has a cost: from a
+cold start Black never wins, and its policy collapses to passing
+([`docs/results.md`](docs/results.md)). The later 5×5 runs use
+`--set komi=0.5`. Checkpoints do not store komi; the programs below
+default to 24.5 on 5×5 and 7.5 otherwise.
 
 ## Usage
 
@@ -127,11 +131,14 @@ choice is derived from (seed, generation, phase, step), so a resumed run
 writes exactly the checkpoints and `state.bin` an uninterrupted one would,
 and results do not depend on `workers` or `train_threads` (0 = all cores).
 
-Opt-in switches, all off by default (the paper's version is the default):
 `reward_head` (a reward prediction on each dynamics step, trained on the
-result at the game's last move), `bn_calibrate` (set generation 0's batch
-norm statistics from one pass over random-move positions),
-`symmetry_augment` (one random board symmetry per unroll).
+result at the game's last move) is on in both presets. The built-in default
+is off, which is the paper's Appendix G reading, so a config without the
+key keeps that meaning. `docs/results.md` measures why the presets turn it
+on. Opt-in switches, off by default (the paper's version is the default):
+`bn_calibrate` (set generation 0's batch norm statistics from two passes
+over random-move positions, K = 1 then K = 0), `symmetry_augment` (one
+random board symmetry per unroll).
 
 ### `mzgo_match` — two players, N games
 
@@ -246,10 +253,22 @@ rewrites stale numbers.
 
 ## Results
 
-Measurements are reported in [`docs/results.md`](docs/results.md): the 5×5
-preset run first, then 9×9, the probes on their checkpoints, and the
-head-to-head with `alphazero-go`. They include failures, which are results
-too.
+Measurements are reported in [`docs/results.md`](docs/results.md), failures
+included. In short, from three 5×5 runs:
+
+- **Without a reward head** (the paper's Appendix G reading for board games,
+  and the original default), the move that ends the game is worth about 0
+  to the search, whatever the score. A winning pass got no visits.
+- **With komi 24.5 on 5×5**, Black never won a self-play game from a cold
+  start, and its policy collapsed to passing.
+- **With the reward head and komi 0.5**, generation 40 beats its own earlier
+  generations (0.68–0.88 over 40 games) but loses to the random bot (0.33)
+  and the rollout bot (0.10). Its search values go above 1, so it prefers
+  playing on to ending a won game.
+
+`reward_head = true` is therefore set in both presets. The 9×9 run (reward
+head on) is in progress. The head-to-head with `alphazero-go` will follow
+it.
 
 Measured so far, with `mzgo_bench` for the 9×9 preset network (6 + 6
 blocks, 64 filters, BLAS) on a Mac Studio (M5 Max) while another training

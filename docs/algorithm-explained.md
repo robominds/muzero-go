@@ -129,8 +129,8 @@ together:
   white-to-move plane.
 - **`g(sᵏ⁻¹, aᵏ) → sᵏ`** replaces `Board::play`. Its input is the previous
   hidden state with one more plane for the move (chapter 02). With the
-  optional reward head it also predicts a reward; by default it does not
-  (chapter 06).
+  reward head it also predicts a reward. The presets turn the head on; the
+  built-in default leaves it off (chapter 06).
 - **`f(sᵏ) → (pᵏ, vᵏ)`** is AlphaZero's two heads with no trunk of its own:
   a policy over the n² points and pass, and a value in [−1, 1] for the side
   to move at that state.
@@ -455,7 +455,7 @@ Selection is the pseudocode's `ucb_score`:
   score(a) = Q̄(s, a) + P(s, a) · √N(s) / (1 + N(s, a)) · (c1 + log((N(s) + c2 + 1) / c2))
 
 with c1 = 1.25 and c2 = 19652. For a few hundred simulations the log term
-is below 0.01, so the exploration weight is effectively the constant 1.25.
+is about 0.01, so the exploration weight is effectively the constant 1.25.
 
 ```cpp
 int Search::selectChild(const Node& parent) const {
@@ -527,8 +527,11 @@ float MinMaxStats::normalize(float q) const { return hi_ > lo_ ? (q - lo_) / (hi
 
 Without a reward head every value comes out of a `tanh` and Q stays inside
 [−1, 1], so the range never widens and the normalization is the fixed map
-Q̄ = (Q + 1) / 2. (With the reward head, r − v can reach ±2, and the range
-grows as such values appear.)
+Q̄ = (Q + 1) / 2. (With the reward head, which the presets turn on, r − v
+can reach ±2, and the range grows as such values appear. A real game's
+return never goes above 1, so a Q above 1 means the model's rewards and
+values disagree with the absorbing-state targets; `docs/results.md` finds
+such values in the 5×5 reward-head run.)
 
 **The unvisited child.** An edge nobody has visited has no Q. The
 pseudocode scores it 0 on the *normalized* scale — and Q̄ = 0 means Q = −1:
@@ -636,15 +639,28 @@ the true result — but the edge that ends the game carries no payoff. The
 same holds for a game stopped by the move cap: its last state is absorbing
 too.
 
-This is why the reward head exists as a switch. With `reward_head = true`
-the reward target on the edge into position T is the outcome for the
-player who made that last move, and Q = r − v(after) ≈ r: ending a won game
-is worth +1 again. The paper's
-Appendix G omits the reward loss for board games ("in board games without
-intermediate rewards, we omit the reward prediction loss"), so the switch
-is off in both presets; whether its absence shows up in play (games that
-reach the move cap, the `capped_games` column; the depth of search past
-the end) is a question for [`docs/results.md`](results.md).
+That is what the reward head fixes. With `reward_head = true`, the reward
+target on the edge into position T is the outcome for the player who made
+that last move, and Q = r − v(after) ≈ r: ending a won game is worth +1
+again. The paper reads both ways. Its Appendix G omits the reward loss for
+board games ("in board games without intermediate rewards, we omit the
+reward prediction loss"), while its §3 loss and its pseudocode's
+`update_weights` keep the reward term for every game. The first version of
+this project followed Appendix G. It showed exactly the problem above
+([`docs/results.md`](results.md)). On 5×5 with komi 0.5, after `C3 pass`,
+Black's pass would end the game and win by 24.5, yet it got a prior of
+0.028 and no visits. The run without the head had fallen far behind: its
+generation 12 lost 1–39 to the reward-head run's generation 12. Both
+presets now set `reward_head = true`. The built-in default stays off, so
+older configs keep their meaning.
+
+The head is not the whole answer. With it, the 5×5 model beats its own
+earlier generations but loses to a random player. In the positions where
+it goes wrong, the search rates a move that keeps the game going at about
++1.4, above anything a real result can be. It rates the pass that would end
+a won game at about +0.4. So the model plays on inside its own territory
+until it fills its own last eye. Where those values above 1 come from is
+not yet measured (`docs/results.md`, "What is not yet known").
 
 **Sampling.** A training batch picks positions uniformly over every
 position in the replay window, the paper's "states are sampled uniformly"
@@ -844,8 +860,8 @@ different input distribution:
   get K updates per step and `f`'s K + 1, in unroll order. The result is a
   blend of every step's statistics, the later steps weighted a little more
   (the last call's update is the most recent; with K = 5 and momentum 0.1
-  the relative weights run from 0.9⁵ ≈ 0.59 for the first call to 1 for
-  the last).
+  the relative weights run from 0.9⁴ ≈ 0.66 for `g`'s first call, or
+  0.9⁵ ≈ 0.59 for `f`'s, to 1 for the last).
 - In search, `g` is applied at every depth with that one blend, and `f` is
   applied to the root's `s⁰` and to deep imagined states with the same
   blend.
@@ -1050,7 +1066,9 @@ fails in a way that stops learning, a stabilising change may be added as
 an opt-in switch (default off), and `docs/results.md` reports the paper
 version's failure and the switch's effect side by side. `bn_calibrate`
 (chapter 08) and `reward_head` (chapter 06) are the two switches that
-exist.
+exist. `reward_head` is the exception to "default off". The paper
+contradicts itself on it (chapter 06), Appendix G's reading was measured
+to fail, and the presets turn it on.
 
 ---
 
@@ -1105,7 +1123,7 @@ total-variation distance ½ Σₐ |p(sᵏ)ₐ − p(h(position t+k))ₐ|.
 ```
 *src/probes.cpp:149 — `latentProbe`, abridged*
 
-*How to read it:* k = 0 is 0 by construction (the same bits). Growth with k
+*How to read it:* k = 0 is 0 by construction (0 up to rounding). Growth with k
 is the drift of the imagination away from what the network would say on
 the real position. The total-variation distance is the fraction of policy
 mass that would have to move; 0.5 means half the prior is on different
