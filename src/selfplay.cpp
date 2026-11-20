@@ -139,10 +139,7 @@ std::vector<GameRecord> playSelfPlay(const Model& model, const SelfPlayConfig& c
             depthSum += perGame[i].depthSum;
             pastEndSum += perGame[i].pastEndSum;
             moves += records[i].length();
-            const auto& m = records[i].moves;
-            const int pass = records[i].area();
-            const bool twoPasses = m.size() >= 2 && m[m.size() - 1] == pass && m[m.size() - 2] == pass;
-            capped += !twoPasses;
+            capped += !records[i].endedByPasses();
         }
         stats->seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         stats->meanLength = games ? moves / games : 0.0;

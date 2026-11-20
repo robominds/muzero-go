@@ -54,11 +54,20 @@ void fillSample(const GameRecord& g, int t, int K, int history, int sym, Rng& rn
         batch.actions[static_cast<size_t>(b) * K + k] = transformAction(sym, a, n);
     }
 
+    // A game the players ended (two passes) is over at T: its last move
+    // earns the outcome and the state after it is absorbing (value 0, reward
+    // 0 forever). A game the move cap stopped was only truncated: its last
+    // move was ordinary (reward 0), the score at the cap is the best
+    // estimate of position T's value, and past T there is no target at all.
+    const bool ended = g.endedByPasses();
     for (int k = 0; k <= K; ++k) {
         const int p = t + k;
         const size_t slot = static_cast<size_t>(b) * (K + 1) + k;
         float* pol = batch.policyTargets.data() + slot * A;
         std::fill(pol, pol + A, 0.0f);
+        const bool known = ended || p <= T;
+        batch.valueMask[slot] = known ? 1.0f : 0.0f;
+        batch.rewardMask[slot] = known ? 1.0f : 0.0f;
         if (p < T) {
             const float* src = g.policies.data() + static_cast<size_t>(p) * A;
             for (int a = 0; a < A; ++a) pol[transformAction(sym, a, n)] = src[a];
@@ -66,10 +75,10 @@ void fillSample(const GameRecord& g, int t, int K, int history, int sym, Rng& rn
             batch.valueTargets[slot] = g.outcomeFor(p);
         } else {
             batch.policyMask[slot] = 0.0f;
-            batch.valueTargets[slot] = 0.0f;
+            batch.valueTargets[slot] = (!ended && p == T) ? g.outcomeFor(T) : 0.0f;
         }
         // The move that ended the game (made at T-1) earns its mover the outcome.
-        batch.rewardTargets[slot] = (k >= 1 && p == T) ? g.outcomeFor(T - 1) : 0.0f;
+        batch.rewardTargets[slot] = (ended && k >= 1 && p == T) ? g.outcomeFor(T - 1) : 0.0f;
     }
 }
 

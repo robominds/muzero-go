@@ -28,13 +28,15 @@ static GameRecord playedRecord(const std::vector<int>& moves, bool passPass) {
     return recordFromGame(g, pol, rv);
 }
 
-static GameRecord handRecord(int T, float resultForBlack) {
+// Moves on distinct points; with endsWithPasses the last two are passes (a
+// game the players ended), else the game stopped at the move cap.
+static GameRecord handRecord(int T, float resultForBlack, bool endsWithPasses) {
     GameRecord r;
     r.boardSize = N; r.komi = 0.5f;
-    for (int p = 0; p < T; ++p) r.moves.push_back(p);   // distinct points
+    for (int p = 0; p < T; ++p) r.moves.push_back(endsWithPasses && p >= T - 2 ? N * N : p);
     r.stones.assign(static_cast<size_t>(T + 1) * N * N, 0);
     r.policies.assign(static_cast<size_t>(T) * A, 0.0f);
-    for (int p = 0; p < T; ++p) r.policies[static_cast<size_t>(p) * A + p] = 1.0f;
+    for (int p = 0; p < T; ++p) r.policies[static_cast<size_t>(p) * A + r.moves[p]] = 1.0f;
     r.rootValues.assign(T, 0.0f);
     r.resultForBlack = resultForBlack;
     return r;
@@ -73,14 +75,14 @@ static void test_record_from_game() {
 }
 
 static void test_targets_signs() {
-    GameRecord r = handRecord(8, 1.0f);   // Black won
+    GameRecord r = handRecord(8, 1.0f, false);   // Black won (at the cap; t + K < T)
     Rng rng(1);
     TrainBatch b;
     b.resize(1, 4, numPlanes(2), N * N, A);
     fillSample(r, 0, 4, 2, 0, rng, b, 0);
     for (int k = 0; k <= 4; ++k) {
         assert(b.valueTargets[k] == (k % 2 == 0 ? 1.0f : -1.0f));
-        assert(b.policyMask[k] == 1.0f);
+        assert(b.policyMask[k] == 1.0f && b.valueMask[k] == 1.0f && b.rewardMask[k] == 1.0f);
         assert(b.policyTargets[static_cast<size_t>(k) * A + k] == 1.0f);
     }
     for (int k = 0; k < 4; ++k) assert(b.actions[k] == k);
@@ -89,7 +91,8 @@ static void test_targets_signs() {
 }
 
 static void test_short_game_padding() {
-    GameRecord r = handRecord(3, 1.0f);   // T = 3, Black won; move 2 made by Black
+    GameRecord r = handRecord(3, 1.0f, true);   // T = 3: B1, pass, pass; Black won; move 2 made by Black
+    assert(r.endedByPasses());
     Rng rng(2);
     const int K = 5, t = 1;
     TrainBatch b;
@@ -106,15 +109,17 @@ static void test_short_game_padding() {
             for (int a = 0; a < A; ++a) assert(b.policyTargets[static_cast<size_t>(k) * A + a] == 0.0f);
         }
         if (k >= 1) assert(b.rewardTargets[k] == (p == 3 ? r.outcomeFor(2) : 0.0f));
+        // A game that ended: the absorbing state past T is a real target.
+        assert(b.valueMask[k] == 1.0f && b.rewardMask[k] == 1.0f);
     }
     assert(b.rewardTargets[2] == 1.0f);   // Black made move 2 and won
-    assert(b.actions[0] == 1 && b.actions[1] == 2);
+    assert(b.actions[0] == N * N && b.actions[1] == N * N);
     for (int k = 0; k < K; ++k) assert(b.actions[k] >= 0 && b.actions[k] < A);
     std::printf("test_short_game_padding ok\n");
 }
 
 static void test_symmetry_consistency() {
-    GameRecord r = handRecord(6, -1.0f);
+    GameRecord r = handRecord(6, -1.0f, false);
     Rng rng(3);
     const int t = 2, K = 2, sym = 3;
     TrainBatch b;
@@ -130,10 +135,53 @@ static void test_symmetry_consistency() {
     std::printf("test_symmetry_consistency ok\n");
 }
 
+// A game stopped by the move cap was truncated, not ended: its last move
+// pays nothing (reward 0 on every edge), the position at the cap is valued
+// by its score (outcomeFor(T)), and past T nothing is known (every mask 0).
+static void test_capped_game_truncated() {
+    const int T = 6;
+    GameRecord r = handRecord(T, 1.0f, false);   // Black ahead at the cap
+    assert(!r.endedByPasses());
+    Rng rng(4);
+    const int K = 5, t = 3;
+    TrainBatch b;
+    b.resize(1, K, numPlanes(1), N * N, A);
+    fillSample(r, t, K, 1, 0, rng, b, 0);
+    for (int k = 0; k <= K; ++k) {
+        const int p = t + k;
+        if (k >= 1) assert(b.rewardTargets[k] == 0.0f);
+        if (p < T) {
+            assert(b.policyMask[k] == 1.0f && b.valueMask[k] == 1.0f && b.rewardMask[k] == 1.0f);
+            assert(b.valueTargets[k] == r.outcomeFor(p));
+        } else if (p == T) {
+            assert(b.policyMask[k] == 0.0f && b.valueMask[k] == 1.0f && b.rewardMask[k] == 1.0f);
+            assert(b.valueTargets[k] == r.outcomeFor(T));
+        } else {
+            assert(b.policyMask[k] == 0.0f && b.valueMask[k] == 0.0f && b.rewardMask[k] == 0.0f);
+        }
+    }
+    assert(b.valueTargets[3] == 1.0f);            // Black to move at the cap, and ahead
+    std::printf("test_capped_game_truncated ok\n");
+}
+
+static void test_ended_by_passes() {
+    assert(handRecord(3, 1.0f, true).endedByPasses());
+    assert(!handRecord(3, 1.0f, false).endedByPasses());
+    assert(!handRecord(1, 1.0f, false).endedByPasses());
+    GameRecord one = handRecord(2, 1.0f, false);
+    one.moves = {N * N, 3};                       // a pass, then a move: not ended
+    assert(!one.endedByPasses());
+    one.moves = {N * N, N * N};
+    assert(one.endedByPasses());
+    std::printf("test_ended_by_passes ok\n");
+}
+
 int main() {
     test_record_from_game();
     test_targets_signs();
     test_short_game_padding();
     test_symmetry_consistency();
+    test_capped_game_truncated();
+    test_ended_by_passes();
     return 0;
 }

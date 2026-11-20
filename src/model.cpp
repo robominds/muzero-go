@@ -27,6 +27,8 @@ void TrainBatch::resize(int b, int k, int planes, int area, int numActions) {
     policyMask.assign(sb * (sk + 1), 0.0f);
     valueTargets.assign(sb * (sk + 1), 0.0f);
     rewardTargets.assign(sb * (sk + 1), 0.0f);
+    valueMask.assign(sb * (sk + 1), 0.0f);
+    rewardMask.assign(sb * (sk + 1), 0.0f);
 }
 
 } // namespace mzgo

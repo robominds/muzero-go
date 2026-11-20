@@ -13,8 +13,14 @@
 //     policy target = the search's visit distribution at p,
 //     reward target = nonzero only for the move that ended the game,
 //   and the actions fed to the dynamics model are the moves actually played.
-//   Past the end of the game the state is "absorbing": value 0, reward 0, no
-//   policy loss (mask 0), and the action is random padding.
+//   Past the end of a game the players ended (two passes) the state is
+//   "absorbing": value 0, reward 0, no policy loss (mask 0), and the action
+//   is random padding.
+//   A game the move cap stopped did not end, it was truncated: every reward
+//   target is 0 (its last move was an ordinary move), the value target at
+//   p = T is outcomeFor(T) (the score at the cap, the best estimate of that
+//   position's value), and past T there is no target (value, reward and
+//   policy masks 0; the actions are still random padding).
 #pragma once
 #include <cstdint>
 #include <vector>
@@ -41,6 +47,12 @@ struct GameRecord {
     Color toMoveAt(int p) const { return p % 2 == 0 ? Color::Black : Color::White; }
     // Result from the view of the side to move at position p.
     float outcomeFor(int p) const { return p % 2 == 0 ? resultForBlack : -resultForBlack; }
+    // True iff the players ended the game (its last two moves are passes);
+    // false for a game the move cap stopped.
+    bool endedByPasses() const {
+        const int T = length(), pass = area();
+        return T >= 2 && moves[T - 1] == pass && moves[T - 2] == pass;
+    }
 };
 
 // policies is flat [T][actions], rootValues is [T] (sizes asserted).

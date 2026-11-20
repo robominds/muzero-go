@@ -74,6 +74,8 @@ TrainBatch randomBatch(const NetConfig& cfg, int B, int K, Rng& rng) {
     for (int& a : t.actions) a = rng.below(cfg.actions());
     for (float& p : t.policyTargets) p = 1.0f / cfg.actions();
     for (float& m : t.policyMask) m = 1.0f;
+    for (float& m : t.valueMask) m = 1.0f;
+    for (float& m : t.rewardMask) m = 1.0f;
     for (float& z : t.valueTargets) z = rng.below(2) ? 1.0f : -1.0f;
     return t;
 }

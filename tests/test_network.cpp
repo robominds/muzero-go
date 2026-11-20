@@ -34,7 +34,7 @@ NetConfig smallConfig(bool rewardHead, int unrollSteps = 3) {
 }
 
 // A random unroll batch: observation planes in {0, 1}, random actions (some
-// of them passes), normalized random policy targets with every mask 1,
+// of them passes), normalized random policy targets with every mask 1 (policy, value, reward),
 // value targets in [-1, 1], reward targets in {-1, 0, 1}.
 TrainBatch randomBatch(const NetConfig& cfg, int B, int K, Rng& rng) {
     TrainBatch t;
@@ -46,7 +46,7 @@ TrainBatch randomBatch(const NetConfig& cfg, int B, int K, Rng& rng) {
         double sum = 0.0;
         for (int a = 0; a < cfg.actions(); ++a) sum += row[a] = static_cast<float>(rng.uniform());
         for (int a = 0; a < cfg.actions(); ++a) row[a] = static_cast<float>(row[a] / sum);
-        t.policyMask[i] = 1.0f;
+        t.policyMask[i] = t.valueMask[i] = t.rewardMask[i] = 1.0f;
         t.valueTargets[i] = static_cast<float>(2.0 * rng.uniform() - 1.0);
         t.rewardTargets[i] = static_cast<float>(rng.below(3) - 1);
     }
@@ -205,7 +205,18 @@ static void checkUnrollGradient(bool rewardHead) {
     TrainBatch batch = randomBatch(cfg, B, K, rng);
     batch.policyMask[1 * (K + 1) + 2] = 0.0f;           // sample 1 is past the game's end at k = 2
     batch.actions[2 * K + 0] = cfg.area();               // sample 2 passes first
+    // Sample 0 is past the cap of a truncated game at k = 2: no value or
+    // reward target there (and no policy target).
+    batch.policyMask[0 * (K + 1) + 2] = batch.valueMask[0 * (K + 1) + 2] = batch.rewardMask[0 * (K + 1) + 2] = 0.0f;
+    batch.valueMask[2 * (K + 1) + 1] = 0.0f;             // and two lone masked entries
+    batch.rewardMask[1 * (K + 1) + 1] = 0.0f;
     TrainWorkspace ws(cfg, B, K, be);
+    {   // A masked entry's target does not enter the loss.
+        TrainBatch wild = batch;
+        wild.valueTargets[0 * (K + 1) + 2] = wild.valueTargets[2 * (K + 1) + 1] = 50.0f;
+        wild.rewardTargets[0 * (K + 1) + 2] = wild.rewardTargets[1 * (K + 1) + 1] = -50.0f;
+        assert(net.computeLoss(ws, wild).total == net.computeLoss(ws, batch).total);
+    }
 
     const UnrollLoss trained = net.trainStep(ws, batch, 1.0f);
     const UnrollLoss probed = net.computeLoss(ws, batch);

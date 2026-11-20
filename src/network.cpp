@@ -182,8 +182,9 @@ void MuZeroNetwork::forward(TrainWorkspace& ws, const TrainBatch& batch, BnMode 
 }
 
 // Per step k: policy = mean_b mask * CE(pi, softmax(logits)) (divided by B,
-// not by the number of unmasked samples), value = mean_b (z - v)^2, reward =
-// mean_b (u - r)^2 for k >= 1 with the head. total = sum_k scale_k * (...),
+// not by the number of unmasked samples), value = mean_b valueMask * (z - v)^2,
+// reward = mean_b rewardMask * (u - r)^2 for k >= 1 with the head (the
+// masks are 0 past the cap of a truncated game; again divided by B). total = sum_k scale_k * (...),
 // scale_0 = 1, scale_k = 1/K. With gradients, the loss's derivatives with
 // respect to the logits, values and rewards go into ws.d*_.
 UnrollLoss MuZeroNetwork::loss(TrainWorkspace& ws, const TrainBatch& batch, bool withGradients) const {
@@ -219,9 +220,11 @@ UnrollLoss MuZeroNetwork::loss(TrainWorkspace& ws, const TrainBatch& batch, bool
                 float* d = ws.dLogits_[k].data() + b * actions;
                 for (int a = 0; a < actions; ++a)
                     d[a] = static_cast<float>(w * (std::exp(l[a] - logZ[b]) * sumPi - target[a]));
-                ws.dValues_[k][b] = static_cast<float>(scale * 2.0 * (values[b] - batch.valueTargets[row(b)]) / B);
+                ws.dValues_[k][b] = static_cast<float>(scale * batch.valueMask[row(b)] * 2.0 *
+                                                       (values[b] - batch.valueTargets[row(b)]) / B);
                 if (rewards)
-                    ws.dRewards_[k][b] = static_cast<float>(scale * 2.0 * (rewards[b] - batch.rewardTargets[row(b)]) / B);
+                    ws.dRewards_[k][b] = static_cast<float>(scale * batch.rewardMask[row(b)] * 2.0 *
+                                                            (rewards[b] - batch.rewardTargets[row(b)]) / B);
             }
         });
         // The batch sums run serially, sample by sample: one order of
@@ -234,10 +237,10 @@ UnrollLoss MuZeroNetwork::loss(TrainWorkspace& ws, const TrainBatch& batch, bool
             for (int a = 0; a < actions; ++a) ce -= target[a] * (l[a] - logZ[b]);
             policySum += batch.policyMask[row(b)] * ce;
             const double dv = batch.valueTargets[row(b)] - static_cast<double>(values[b]);
-            valueSum += dv * dv;
+            valueSum += batch.valueMask[row(b)] * dv * dv;
             if (rewards) {
                 const double dr = batch.rewardTargets[row(b)] - static_cast<double>(rewards[b]);
-                rewardSum += dr * dr;
+                rewardSum += batch.rewardMask[row(b)] * dr * dr;
             }
         }
         out.policy[k] = policySum / B;
