@@ -221,8 +221,13 @@ k = 0..K (K = `unroll_steps` = 5):
 - scale_0 = 1, scale_k = 1/K for k ≥ 1 (the pseudocode's weights; the
   paper's text says 1/K for every head — noted as a discrepancy, pseudocode
   followed).
-- The gradient flowing back into each hidden state at the input of g is
-  multiplied by 0.5 (`scale_gradient(hidden_state, 0.5)`).
+- The gradient flowing back into a hidden state through g is multiplied
+  by 0.5. Placement follows the pseudocode, which applies
+  `hidden_state = scale_gradient(hidden_state, 0.5)` after each
+  `recurrent_inference`: sᵏ → g_{k+1} is scaled for k ≥ 1, while s⁰ (the
+  representation's output) receives g₁'s gradient unscaled. The paper's
+  text says "at the start of the dynamics function", i.e. every call —
+  noted as a discrepancy, pseudocode followed.
 - Backpropagation through time: forward stores every step's activations
   (one set per unroll step for g and f); backward runs k = K..0.
 - Batch norm: training mode with each call's own batch statistics; the
@@ -371,6 +376,8 @@ resume, then arena and GTP).
    (both underspecified in the pseudocode).
 5. Loss weights follow the pseudocode (scale 1 at k = 0) rather than the
    paper's text (1/K for all).
+   Likewise the 0.5 hidden-gradient scale follows the pseudocode's
+   placement (not applied between s⁰ and g₁).
 6. Min-max denominator floor 1e-5.
 7. Learning-rate values chosen for the smaller batch.
 8. Dirichlet α scaled with board area; temperature move count scaled.
