@@ -1,3 +1,4 @@
+// Adapted from alphazero-go's network (Mark Castelluccio) for mzgo.
 // MuZero's network: three functions learned together.
 //   representation h(observation) -> s0          (a Trunk, then min-max normalization)
 //   dynamics       g(s_{k-1}, a_k) -> s_k (, r_k) (a Trunk on F + 1 planes, then normalization)
@@ -13,7 +14,13 @@
 // its own saved activations, and its weight gradients add up over the calls.
 // Two scalings from the paper keep the long chain stable: the loss of every
 // step k >= 1 is weighted 1/K, and the gradient flowing back into a hidden
-// state from the dynamics is halved (scale_gradient(s, 0.5)).
+// state s_k with k >= 1 from the next dynamics call is halved. That follows
+// the pseudocode's update_weights, which applies
+// `hidden_state = scale_gradient(hidden_state, 0.5)` AFTER each
+// recurrent_inference, so the edge s0 -> g_1 is not scaled. (The paper's
+// text says "we also scale the gradient at the start of the dynamics
+// function by 1/2", which would include s0; where text and pseudocode
+// disagree, this project follows the pseudocode, as for the loss weights.)
 #pragma once
 #include <cstdint>
 #include <memory>
@@ -100,8 +107,10 @@ public:
     // Training: zeroGrad, forward with batch-statistics BN (running stats
     // updated once per call of each layer, i.e. K times for g per step),
     // loss, backward into the grads. hiddenGradScale: the paper's 0.5 on
-    // the gradient entering g's hidden input; with 1.0 the gradient is the
-    // exact gradient of UnrollLoss::total (what the gradient checks use).
+    // the gradient that g_{k+1}'s hidden input sends back into s_k, for
+    // k >= 1 only (s0 gets g_1's full gradient; see the top of this file);
+    // with 1.0 the gradient is the exact gradient of UnrollLoss::total
+    // (what the gradient checks use). With K = 1 it changes nothing.
     // batch.K must equal ws.unroll(), batch.B <= ws.maxBatch().
     UnrollLoss trainStep(TrainWorkspace& ws, const TrainBatch& batch, float hiddenGradScale = 0.5f);
     // The same forward and loss in Probe mode (batch statistics, running
