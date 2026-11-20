@@ -10,9 +10,12 @@ SRC=${2:-$(cd "$(dirname "$0")/.." && pwd)}
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
+# The presets train on the BLAS backend; a build without it trains on the naive one.
+BACKEND=naive
+grep -q '^MZ_USE_BLAS:BOOL=ON' "$BUILD/CMakeCache.txt" 2>/dev/null && BACKEND=blas
 RUN="$TMP/run"
 CKPT="$RUN/checkpoints/gen_0003.mzn"
-TINY=(--set workers=2 --set train_threads=2 --set generations=2
+TINY=(--set backend=$BACKEND --set workers=2 --set train_threads=2 --set generations=2
       --set repr_blocks=1 --set dyn_blocks=1 --set filters=8 --set value_hidden=8
       --set games_per_generation=4 --set simulations=8 --set train_steps=4 --set batch_size=8
       --set arena_games=2 --set arena_simulations=8 --set rollout_bot_simulations=8)
