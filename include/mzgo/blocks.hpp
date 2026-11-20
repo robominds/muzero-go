@@ -35,6 +35,17 @@ class ThreadPool;   // mzgo/parallel.hpp
 // Calibrate: batch statistics, running statistics SET to them (momentum 1).
 enum class BnMode { Infer, Train, Probe, Calibrate };
 
+// Which set of running statistics every batch norm of a block uses (Infer)
+// or updates (Train, Calibrate); Probe touches none. `set` serves the whole
+// batch; in Infer mode, `rows` (if not null) gives one set per sample
+// instead, so one batch can mix search depths. Blocks are built with
+// `statSets` sets (see layers.hpp's BatchNorm2d); the network decides which
+// call index uses which set (network.hpp).
+struct BnSets {
+    int set = 0;
+    const int* rows = nullptr;   // [B], Infer only
+};
+
 // ---------------------------------------------------------------- min-max
 
 // Hidden-state normalization (App. G): y = (x - min) / max(max - min, 1e-5)
@@ -103,11 +114,11 @@ struct Trunk {
     BatchNorm2d stemBn;
     std::vector<ResidualBlock> blocks;
     Trunk() = default;
-    Trunk(int cin, int filters, int blocks);
+    Trunk(int cin, int filters, int blocks, int statSets = 1);
     void init(Rng& rng);              // He init, stem then blocks in order
     // x [cin][B][A] -> cache.output() [filters][B][A].
     void forward(const Backend& be, const float* x, int B, int n, TrunkCache& cache, BnMode mode,
-                 ThreadPool* pool = nullptr);
+                 ThreadPool* pool = nullptr, BnSets sets = {});
     // x: the forward's input, unchanged. dy: dL/d(output) [filters][B][A],
     // used as working space (overwritten). Accumulates the gradients; writes
     // dx [cin][B][A] (overwrite) unless dx == nullptr. dy and dx must not
@@ -116,7 +127,9 @@ struct Trunk {
                   float* dx, ThreadPool* pool = nullptr);
     // "<prefix>.stem.conv.w", "<prefix>.block0.bn1.gamma", ...
     std::vector<ParamView> params(const std::string& prefix);
-    std::vector<BufferView> buffers(const std::string& prefix);
+    // Per batch norm, per set s: "<prefix>.stem.bn.runMean.k<firstK + s>",
+    // then its runVar; firstK names set 0 by the call index it serves.
+    std::vector<BufferView> buffers(const std::string& prefix, int firstK);
 };
 
 // ---------------------------------------------------------------- heads
@@ -136,17 +149,17 @@ struct ValueHead {
     BatchNorm2d bn;
     Linear fc1, fc2;
     ValueHead() = default;
-    ValueHead(int filters, int area, int hidden);
+    ValueHead(int filters, int area, int hidden, int statSets = 1);
     void init(Rng& rng);
     // x [filters][B][A] -> cache.values [B].
     void forward(const Backend& be, const float* x, int B, int n, ValueHeadCache& cache, BnMode mode,
-                 ThreadPool* pool = nullptr);
+                 ThreadPool* pool = nullptr, BnSets sets = {});
     // dValues: dL/d(values) [B] (after tanh). Writes dx [filters][B][A] (overwrite).
     void backward(const Backend& be, const float* x, const float* dValues, int B, int n,
                   ValueHeadCache& cache, float* dx, ThreadPool* pool = nullptr);
     // "<prefix>.conv.w", "<prefix>.bn.gamma", "<prefix>.fc1.w", ..., "<prefix>.fc2.b"
     std::vector<ParamView> params(const std::string& prefix);
-    std::vector<BufferView> buffers(const std::string& prefix);
+    std::vector<BufferView> buffers(const std::string& prefix, int firstK);   // as Trunk's
 };
 
 // Prediction f: the policy head (1x1 conv -> 2, BN, ReLU, FC -> actions
@@ -168,18 +181,18 @@ struct PredictionHeads {
     Linear policyFc;
     ValueHead value;
     PredictionHeads() = default;
-    PredictionHeads(int filters, int n, int valueHidden);
+    PredictionHeads(int filters, int n, int valueHidden, int statSets = 1);
     void init(Rng& rng);              // policy conv, policy fc, then the value head
     // x [filters][B][A] -> cache.logits, cache.value.values.
     void forward(const Backend& be, const float* x, int B, int n, HeadCache& cache, BnMode mode,
-                 ThreadPool* pool = nullptr);
+                 ThreadPool* pool = nullptr, BnSets sets = {});
     // dLogits [B][actions], dValues [B] (after tanh). Writes dx (overwrite),
     // the sum of both heads' input gradients; dx must not be a scratch buffer.
     void backward(const Backend& be, const float* x, const float* dLogits, const float* dValues, int B,
                   int n, HeadCache& cache, float* dx, ThreadPool* pool = nullptr);
     // "<prefix>.policy.conv.w", ..., "<prefix>.policy.fc.b", "<prefix>.value.conv.w", ...
     std::vector<ParamView> params(const std::string& prefix);
-    std::vector<BufferView> buffers(const std::string& prefix);
+    std::vector<BufferView> buffers(const std::string& prefix, int firstK);   // as Trunk's
 };
 
 // dst[j] += src[j] for j < count, in fixed chunks on the pool.

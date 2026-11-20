@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -16,12 +17,14 @@ using namespace mzgo;
 static const ModelDims kDims{5, 2};
 static const int kActions = 26;
 
-// A fake whose policy and value vary with the state (pure functions of the
-// inputs, so thread-safe): searches then differ from move to move and from
-// game to game, which makes the equality tests below meaningful.
+// A fake whose policy and value vary with the state and, below the root,
+// with the depth the search passes (pure functions of the inputs, so
+// thread-safe): searches then differ from move to move and from game to
+// game, which makes the equality tests below meaningful, and a lockstep
+// batch that handed a row another row's depth would change the games.
 static void varyOutput(const float* hidden, FakeOutput& o) {
     for (int a = 0; a < kActions; ++a) o.logits[a] = 2.0f * o.hidden[a % kDims.hiddenSize()];
-    o.value = 2.0f * hidden[0] - 1.0f;
+    o.value = std::max(-1.0f, std::min(1.0f, 2.0f * hidden[0] - 1.0f + 0.1f * static_cast<float>(o.depth % 3)));
 }
 static FakeModel varyingModel() {
     return FakeModel(kDims, 2, [](const float*, FakeOutput& o) { varyOutput(o.hidden.data(), o); },
@@ -51,7 +54,11 @@ static bool sameRecord(const GameRecord& a, const GameRecord& b) {
 }
 
 static void test_selfplay_finishes() {
-    FakeModel model(kDims);
+    int deepest = 0;                         // one worker: the hook runs on one thread
+    FakeModel model(kDims, 1, nullptr, [&](const float*, int, FakeOutput& o) {
+        assert(o.depth >= 1);
+        deepest = std::max(deepest, o.depth);
+    });
     const SelfPlayConfig cfg = config(16, 8);
     SelfPlayStats stats;
     const auto recs = playSelfPlay(model, cfg, 4, 11, 1, &stats);
@@ -85,6 +92,7 @@ static void test_selfplay_finishes() {
     assert(stats.cappedGames == capped);
     assert(std::fabs(stats.meanLength - totalMoves / 4.0) < 1e-9);
     assert(stats.maxDepth >= 1 && stats.meanDepth >= 1.0 && stats.meanDepth <= stats.maxDepth);
+    assert(stats.maxDepth == deepest);       // each leaf's depth reached the model
     assert(stats.pastEndFraction >= 0.0 && stats.pastEndFraction <= 1.0);
     assert(stats.seconds >= 0.0);
     std::printf("test_selfplay_finishes passed\n");

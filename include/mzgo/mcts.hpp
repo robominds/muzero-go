@@ -55,8 +55,9 @@ private:
 
 // What a pending leaf needs from the model: dynamics on (parentHidden, action).
 // parentHidden points into the search's own storage and stays valid until
-// the next beginRoot.
-struct LeafRequest { const float* parentHidden; int action; };
+// the next beginRoot. depth: the leaf's depth (root child = 1), which the
+// model uses to pick its per-unroll-step batch norm statistics.
+struct LeafRequest { const float* parentHidden; int action; int depth; };
 
 struct SearchResult {
     std::vector<int> visits;           // [actions], illegal-at-root actions are 0

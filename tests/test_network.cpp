@@ -14,12 +14,13 @@
 #include "mzgo/network.hpp"
 #include "mzgo/parallel.hpp"
 #include "mzgo/rng.hpp"
+#include "mzgo/serialize.hpp"
 
 using namespace mzgo;
 
 namespace {
 
-NetConfig smallConfig(bool rewardHead) {
+NetConfig smallConfig(bool rewardHead, int unrollSteps = 3) {
     NetConfig cfg;
     cfg.boardSize = 5;
     cfg.history = 2;
@@ -28,6 +29,7 @@ NetConfig smallConfig(bool rewardHead) {
     cfg.filters = 4;
     cfg.valueHidden = 4;
     cfg.rewardHead = rewardHead;
+    cfg.unrollSteps = unrollSteps;
     return cfg;
 }
 
@@ -171,16 +173,31 @@ static void test_param_names() {
             if (p.name == "dyn.stem.conv.w") assert(p.size == static_cast<size_t>(cfg.filters * (cfg.filters + 1) * 9));
             if (p.name == "repr.stem.conv.w") assert(p.size == static_cast<size_t>(cfg.filters * cfg.planes() * 9));
         }
-        const size_t bnLayers = (1 + 2) + (1 + 2) + 2 + (reward ? 1 : 0);
-        assert(net.buffers().size() == 2 * bnLayers);
+        // Running statistics per call index: h one set, g and the reward
+        // head K (k1..kK), f K + 1 (k0..kK); K = 3 here.
+        const int K = cfg.unrollSteps;
+        const size_t sets = (1 + 2) * 1 + (1 + 2) * K + 2 * (K + 1) + (reward ? K : 0);
+        std::vector<BufferView> buffers = net.buffers();
+        assert(buffers.size() == 2 * sets);
+        std::set<std::string> bufferNames;
+        for (const BufferView& b : buffers) bufferNames.insert(b.name);
+        assert(bufferNames.size() == buffers.size());
+        for (const char* name : {"repr.stem.bn.runMean.k0", "dyn.stem.bn.runVar.k1", "dyn.block0.bn1.runMean.k3",
+                                 "pred.policy.bn.runMean.k0", "pred.value.bn.runVar.k3"})
+            assert(bufferNames.count(name) == 1);
+        for (const char* name : {"repr.stem.bn.runMean.k1", "dyn.stem.bn.runMean.k0", "dyn.stem.bn.runMean.k4",
+                                 "pred.policy.bn.runMean.k4"})
+            assert(bufferNames.count(name) == 0);
+        assert(bufferNames.count("reward.bn.runMean.k3") == (reward ? 1u : 0u));
+        assert(bufferNames.count("reward.bn.runMean.k0") == 0);
     }
     std::printf("test_param_names passed\n");
 }
 
 // trainStep(..., 1.0) against central differences of computeLoss().total.
 static void checkUnrollGradient(bool rewardHead) {
-    const NetConfig cfg = smallConfig(rewardHead);
     const int B = 3, K = 2;
+    const NetConfig cfg = smallConfig(rewardHead, K);
     NaiveBackend be;
     MuZeroNetwork net(cfg, 21);
     Rng rng(22);
@@ -233,7 +250,7 @@ static void test_unroll_gradient() {
 // Every parameter's gradient after trainStep with hidden-gradient scales
 // 0, 0.5 and 1 on the same batch (the forward does not depend on the scale).
 static std::vector<std::vector<std::vector<float>>> gradsForScales(int K) {
-    const NetConfig cfg = smallConfig(false);
+    const NetConfig cfg = smallConfig(false, K);
     const int B = 3;
     NaiveBackend be;
     MuZeroNetwork net(cfg, 31);
@@ -291,62 +308,126 @@ static void test_gradient_scale_half() {
     std::printf("test_gradient_scale_half passed\n");
 }
 
-// After calibrateBatchNorm on a batch, inference mode on that batch
-// computes what the training-mode (batch statistics) forward computed.
-// Two corrections make "the same" exact:
-// - Calibration stores the unbiased variance (M / (M - 1) times the batch's,
-//   what the running average estimates), while the training forward
-//   normalizes with the biased one; the test rescales runVar by (M - 1) / M.
-// - A layer called several times keeps its last call's statistics: with
-//   K = 1, f's are those of step 1, so the recurrent inference is compared
-//   after a K = 1 calibration (s0, then s1, p1, v1, r1) and the initial
-//   inference's policy and value after a K = 0 one.
+// After calibrateBatchNorm on a K-step batch, inference mode on that batch
+// computes what the training-mode (batch statistics) forward computed, at
+// every unroll step: initialInference reproduces step 0 and
+// recurrentInference at depth k reproduces step k (hidden, p, v, r), because
+// each call index k keeps its own running statistics.
+// Calibration stores the unbiased variance (M / (M - 1) times the batch's,
+// what the running average estimates), while the training forward
+// normalizes with the biased one; the test rescales runVar by (M - 1) / M.
 static void test_inference_matches_probe() {
-    const NetConfig cfg = smallConfig(true);
+    const int K = 3;
+    NetConfig cfg = smallConfig(true);
     const int B = 4, F = cfg.filters, A = cfg.area();
     const double M = static_cast<double>(B) * A;
     NaiveBackend be;
     MuZeroNetwork net(cfg, 41);
     Rng rng(42);
     randomizeAffine(net, rng);
-    const TrainBatch batch = randomBatch(cfg, B, 1, rng);
-    auto unbiasToBiased = [&] {
-        for (const BufferView& b : net.buffers())
-            if (b.name.find(".runVar") != std::string::npos)
-                for (size_t i = 0; i < b.size; ++i) b.value[i] = static_cast<float>(b.value[i] * ((M - 1) / M));
-    };
+    const TrainBatch batch = randomBatch(cfg, B, K, rng);
     const size_t hiddenCount = static_cast<size_t>(B) * F * A;
     auto iws = net.newInferWorkspace(B, be);
 
-    // K = 1.
-    TrainWorkspace ws(cfg, B, 1, be);
+    TrainWorkspace ws(cfg, B, K, be);
     net.calibrateBatchNorm(ws, batch);
-    unbiasToBiased();
-    ModelOutput out0, out1;
-    net.initialInference(*iws, batch.observations.data(), B, out0);
-    assert(out0.hidden.size() == hiddenCount && out0.rewards == std::vector<float>(B, 0.0f));
-    assertNear(out0.hidden, ws.hidden(0), hiddenCount, 1e-4);
-    std::vector<int> actions(B);
-    for (int b = 0; b < B; ++b) actions[b] = batch.actions[b * 1 + 0];
-    net.recurrentInference(*iws, out0.hidden.data(), actions.data(), B, out1);
-    assertNear(out1.hidden, ws.hidden(1), hiddenCount, 1e-4);
-    assertNear(out1.logits, ws.logits(1), static_cast<size_t>(B) * cfg.actions(), 1e-4);
-    assertNear(out1.values, ws.values(1), B, 1e-4);
-    assertNear(out1.rewards, ws.rewards(1), B, 1e-4);
-    for (float v : out1.hidden) assert(v >= 0.0f && v <= 1.0f);
+    for (const BufferView& b : net.buffers())
+        if (b.name.find(".runVar") != std::string::npos)
+            for (size_t i = 0; i < b.size; ++i) b.value[i] = static_cast<float>(b.value[i] * ((M - 1) / M));
 
-    // K = 0: the same observations, f last called on s0.
-    TrainBatch initial = batch;
-    initial.resize(B, 0, cfg.planes(), A, cfg.actions());
-    initial.observations = batch.observations;
-    TrainWorkspace ws0(cfg, B, 0, be);
-    net.calibrateBatchNorm(ws0, initial);
-    unbiasToBiased();
-    net.initialInference(*iws, batch.observations.data(), B, out0);
-    assertNear(out0.hidden, ws0.hidden(0), hiddenCount, 1e-4);
-    assertNear(out0.logits, ws0.logits(0), static_cast<size_t>(B) * cfg.actions(), 1e-4);
-    assertNear(out0.values, ws0.values(0), B, 1e-4);
+    ModelOutput out;
+    net.initialInference(*iws, batch.observations.data(), B, out);
+    assert(out.hidden.size() == hiddenCount && out.rewards == std::vector<float>(B, 0.0f));
+    assertNear(out.hidden, ws.hidden(0), hiddenCount, 1e-4);
+    assertNear(out.logits, ws.logits(0), static_cast<size_t>(B) * cfg.actions(), 1e-4);
+    assertNear(out.values, ws.values(0), B, 1e-4);
+    std::vector<int> actions(B);
+    for (int k = 1; k <= K; ++k) {
+        for (int b = 0; b < B; ++b) actions[b] = batch.actions[b * K + (k - 1)];
+        const std::vector<int> depths(B, k);
+        net.recurrentInference(*iws, out.hidden.data(), actions.data(), depths.data(), B, out);
+        assertNear(out.hidden, ws.hidden(k), hiddenCount, 1e-4);
+        assertNear(out.logits, ws.logits(k), static_cast<size_t>(B) * cfg.actions(), 1e-4);
+        assertNear(out.values, ws.values(k), B, 1e-4);
+        assertNear(out.rewards, ws.rewards(k), B, 1e-4);
+        for (float v : out.hidden) assert(v >= 0.0f && v <= 1.0f);
+    }
     std::printf("test_inference_matches_probe passed\n");
+}
+
+// Rows of different depths in one recurrent batch: each row gets exactly
+// the bits it gets when the whole batch runs at that row's depth (the same
+// inputs, so only the batch norm sets differ). Depths past K use set K.
+static void test_mixed_depths_bit_identical() {
+    const NetConfig cfg = smallConfig(true);   // K = 3
+    const int B = 5, K = cfg.unrollSteps, hs = cfg.hiddenSize(), na = cfg.actions();
+    NaiveBackend be;
+    MuZeroNetwork net(cfg, 45);
+    Rng rng(46);
+    randomizeAffine(net, rng);
+    const TrainBatch batch = randomBatch(cfg, B, K, rng);
+    TrainWorkspace ws(cfg, B, K, be);
+    net.trainStep(ws, batch);                  // distinct statistics per set
+    auto iws = net.newInferWorkspace(B, be);
+    ModelOutput root;
+    net.initialInference(*iws, batch.observations.data(), B, root);
+    const std::vector<int> actions = {0, 3, cfg.area(), 7, 12};
+    const std::vector<int> mixed = {3, 1, 2, 7, 1};
+    ModelOutput got;
+    net.recurrentInference(*iws, root.hidden.data(), actions.data(), mixed.data(), B, got);
+    bool differs = false;
+    for (int d : {1, 2, 3, 7}) {
+        const std::vector<int> uniform(B, d);
+        ModelOutput want;
+        net.recurrentInference(*iws, root.hidden.data(), actions.data(), uniform.data(), B, want);
+        for (int b = 0; b < B; ++b) {
+            if (mixed[b] != d) {
+                differs = differs || want.logits[static_cast<size_t>(b) * na] != got.logits[static_cast<size_t>(b) * na];
+                continue;
+            }
+            assert(std::equal(want.hidden.begin() + b * hs, want.hidden.begin() + (b + 1) * hs,
+                              got.hidden.begin() + b * hs));
+            assert(std::equal(want.logits.begin() + b * na, want.logits.begin() + (b + 1) * na,
+                              got.logits.begin() + b * na));
+            assert(want.values[b] == got.values[b] && want.rewards[b] == got.rewards[b]);
+        }
+    }
+    assert(differs);                           // the depth does change the outputs
+    // Depth 7 > K uses set K: the same as depth 3.
+    const std::vector<int> three(B, 3), seven(B, 7);
+    ModelOutput a, b;
+    net.recurrentInference(*iws, root.hidden.data(), actions.data(), three.data(), B, a);
+    net.recurrentInference(*iws, root.hidden.data(), actions.data(), seven.data(), B, b);
+    assert(a.hidden == b.hidden && a.logits == b.logits && a.values == b.values && a.rewards == b.rewards);
+    std::printf("test_mixed_depths_bit_identical passed\n");
+}
+
+// The workspace's K is a prefix of the network's unroll_steps; training
+// needs the full K (each set of statistics is built for its step).
+static void test_unroll_steps_checked() {
+    const NetConfig cfg = smallConfig(false, 2);
+    NaiveBackend be;
+    MuZeroNetwork net(cfg, 47);
+    bool threw = false;
+    try {
+        TrainWorkspace ws(cfg, 2, 3, be);
+    } catch (const std::invalid_argument& e) {
+        threw = std::string(e.what()).find("unroll_steps") != std::string::npos;
+    }
+    assert(threw);
+    Rng rng(48);
+    const TrainBatch batch = randomBatch(cfg, 2, 1, rng);
+    TrainWorkspace ws1(cfg, 2, 1, be);
+    net.computeLoss(ws1, batch);               // a shorter unroll is fine without training
+    net.calibrateBatchNorm(ws1, batch);
+    threw = false;
+    try {
+        net.trainStep(ws1, batch);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    assert(threw);
+    std::printf("test_unroll_steps_checked passed\n");
 }
 
 // The training step's bits do not depend on the thread pool.
@@ -389,9 +470,9 @@ static void test_network_model() {
     session->initialInference(batch.observations.data(), B, a);
     net.initialInference(*iws, batch.observations.data(), B, b);
     assert(a.hidden == b.hidden && a.logits == b.logits && a.values == b.values);
-    const std::vector<int> actions = {0, cfg.area(), 7};
-    session->recurrentInference(a.hidden.data(), actions.data(), B, a);   // hidden read from out itself
-    net.recurrentInference(*iws, b.hidden.data(), actions.data(), B, b);
+    const std::vector<int> actions = {0, cfg.area(), 7}, depths = {1, 2, 5};
+    session->recurrentInference(a.hidden.data(), actions.data(), depths.data(), B, a);   // hidden read from out itself
+    net.recurrentInference(*iws, b.hidden.data(), actions.data(), depths.data(), B, b);
     assert(a.hidden == b.hidden && a.logits == b.logits && a.values == b.values && a.rewards == b.rewards);
     std::printf("test_network_model passed\n");
 }
@@ -403,9 +484,9 @@ static void test_checkpoint_round_trip() {
     MuZeroNetwork net(cfg, 71);
     Rng rng(72);
     randomizeAffine(net, rng);
-    const TrainBatch batch = randomBatch(cfg, B, 2, rng);
-    TrainWorkspace ws(cfg, B, 2, be);
-    net.trainStep(ws, batch);                 // running statistics away from their initial values
+    const TrainBatch batch = randomBatch(cfg, B, cfg.unrollSteps, rng);
+    TrainWorkspace ws(cfg, B, cfg.unrollSteps, be);
+    net.trainStep(ws, batch);                 // every set of running statistics away from its initial values
     const std::string path = tempPath("round_trip.mzn");
     saveNetwork(net, path);
     MuZeroNetwork loaded = loadNetwork(path);
@@ -416,15 +497,25 @@ static void test_checkpoint_round_trip() {
     for (size_t t = 0; t < pa.size(); ++t)
         assert(pa[t].name == pb[t].name && std::equal(pa[t].value, pa[t].value + pa[t].size, pb[t].value));
     assert(buffersOf(net) == buffersOf(loaded));
+    std::vector<BufferView> ba = net.buffers(), bb = loaded.buffers();
+    for (size_t t = 0; t < ba.size(); ++t) assert(ba[t].name == bb[t].name);
+    // Each step's set was updated from its own call: g's k1 and k3 differ.
+    const float* dynK1 = nullptr;
+    const float* dynK3 = nullptr;
+    for (const BufferView& b : bb) {
+        if (b.name == "dyn.block0.bn1.runMean.k1") dynK1 = b.value;
+        if (b.name == "dyn.block0.bn1.runMean.k3") dynK3 = b.value;
+    }
+    assert(dynK1 && dynK3 && !std::equal(dynK1, dynK1 + cfg.filters, dynK3));
 
     auto ia = net.newInferWorkspace(B, be), ib = loaded.newInferWorkspace(B, be);
     ModelOutput a, b;
     net.initialInference(*ia, batch.observations.data(), B, a);
     loaded.initialInference(*ib, batch.observations.data(), B, b);
     assert(a.hidden == b.hidden && a.logits == b.logits && a.values == b.values);
-    const std::vector<int> actions = {1, 2, cfg.area()};
-    net.recurrentInference(*ia, a.hidden.data(), actions.data(), B, a);
-    loaded.recurrentInference(*ib, b.hidden.data(), actions.data(), B, b);
+    const std::vector<int> actions = {1, 2, cfg.area()}, depths = {1, 3, 2};
+    net.recurrentInference(*ia, a.hidden.data(), actions.data(), depths.data(), B, a);
+    loaded.recurrentInference(*ib, b.hidden.data(), actions.data(), depths.data(), B, b);
     assert(a.hidden == b.hidden && a.logits == b.logits && a.values == b.values && a.rewards == b.rewards);
     std::printf("test_checkpoint_round_trip passed\n");
 }
@@ -454,6 +545,24 @@ static void test_corrupt_checkpoint() {
         threw = std::string(e.what()).find(path) != std::string::npos;
     }
     assert(threw);
+
+    {   // a version 1 checkpoint (one set of batch norm statistics per layer)
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        BinaryWriter w(out);
+        w.u32(0x4E475A4D);
+        w.u32(1);
+        for (int v : {5, 2, 1, 1, 4, 4, 0}) w.i32(v);
+        w.u32(0);
+    }
+    threw = false;
+    try {
+        loadNetwork(path);
+    } catch (const std::runtime_error& e) {
+        const std::string what = e.what();
+        threw = what.find(path) != std::string::npos && what.find("version 1") != std::string::npos &&
+                what.find("format changed") != std::string::npos;
+    }
+    assert(threw);
     std::filesystem::remove(path);
     std::printf("test_corrupt_checkpoint passed\n");
 }
@@ -463,6 +572,8 @@ int main() {
     test_unroll_gradient();
     test_gradient_scale_half();
     test_inference_matches_probe();
+    test_mixed_depths_bit_identical();
+    test_unroll_steps_checked();
     test_pool_bit_identical();
     test_network_model();
     test_checkpoint_round_trip();

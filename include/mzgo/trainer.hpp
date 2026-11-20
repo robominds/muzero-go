@@ -60,14 +60,15 @@ public:
     // empty. Writes runDir/config.cfg (configToString), the generation 0
     // network (seed deriveSeed(seed, 0xA11)) as gen_0000.mzn, state.bin and
     // log.csv's header. With cfg.bnCalibrate, generation 0's batch norm
-    // statistics are first set from one batch of random-move positions.
+    // statistics (every unroll step's set) are first set from one K-step
+    // batch of random-move positions.
     // Throws std::invalid_argument for an invalid config (validate()).
     static Trainer startNew(const RunConfig& cfg, const std::string& runDir);
     // Resume: reads config.cfg and state.bin and rewrites config.cfg with the
     // overrides applied. Overrides may change only non-architecture keys
-    // (restating an architecture key's value is allowed), and not
-    // unroll_steps (log.csv's columns depend on it), else
-    // std::invalid_argument naming the key. A missing or corrupt state.bin is
+    // (restating an architecture key's value is allowed; unroll_steps is one,
+    // since batch norm keeps statistics per unroll step and log.csv has
+    // columns per step), else std::invalid_argument naming the key. A missing or corrupt state.bin is
     // a std::runtime_error naming the file.
     static Trainer resume(const std::string& runDir, const std::vector<std::string>& overrides);
 

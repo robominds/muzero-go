@@ -21,6 +21,24 @@
 // text says "we also scale the gradient at the start of the dynamics
 // function by 1/2", which would include s0; where text and pseudocode
 // disagree, this project follows the pseudocode, as for the loss weights.)
+//
+// Batch norm per unroll step. In training, every batch norm normalizes
+// with the statistics of the batch it sees at that call; at inference it
+// uses running estimates of them. g's input drifts along the unroll (s0 is
+// h's output, s1 g's, ...), so the activations each layer sees at step 1
+// are not those it sees at step 3. With one set of running statistics per
+// layer, inference would normalize every depth with an average over all
+// steps, and the network would compute something at depth k that training
+// never produced (the final review measured k = 1 reward MSE 0.032 at
+// inference vs 0.0046 with batch statistics). So every batch norm keeps one
+// set of running statistics PER CALL INDEX, while its learnable gamma and
+// beta stay shared: f has K + 1 sets (s0..sK), g and the reward head K
+// (the calls producing s1..sK), h one. Training step k updates only set k;
+// inference at search depth d uses set min(d, K) (deeper states than the
+// unroll ever reached reuse the last one). The paper does not say how it
+// handles batch norm across the unroll (its pseudocode has none); this is
+// this project's choice. K is therefore part of the architecture
+// (NetConfig::unrollSteps, stored in the checkpoint).
 #pragma once
 #include <cstdint>
 #include <memory>
@@ -38,6 +56,7 @@ class ThreadPool;   // mzgo/parallel.hpp
 struct NetConfig {
     int boardSize = 9, history = 8, reprBlocks = 6, dynBlocks = 6, filters = 64, valueHidden = 64;
     bool rewardHead = false;
+    int unrollSteps = 5;   // K the batch norm statistics are kept for (see the top of this file)
     int planes() const { return 2 * history + 2; }      // observation planes (encode.hpp)
     int area() const { return boardSize * boardSize; }
     int actions() const { return area() + 1; }           // every point, plus pass
@@ -56,6 +75,10 @@ struct UnrollLoss {
 // for up to maxBatch samples and exactly K steps. With a pool, every layer
 // spreads over its threads; the bits are the same with or without one (see
 // layers.hpp). The pool must outlive the workspace's use.
+// K must be in 0..cfg.unrollSteps (std::invalid_argument otherwise): a
+// shorter unroll is a prefix of the full one, step k touching the
+// statistics of call index k exactly as in a K-step unroll, which
+// calibration and loss evaluation may use; trainStep needs the full K.
 class TrainWorkspace {
 public:
     TrainWorkspace(const NetConfig& cfg, int maxBatch, int K, const Backend& backend, ThreadPool* pool = nullptr);
@@ -104,21 +127,23 @@ public:
     std::vector<BufferView> buffers();   // every batch norm's runMean, runVar, same order
     void zeroGrad();
 
-    // Training: zeroGrad, forward with batch-statistics BN (running stats
-    // updated once per call of each layer, i.e. K times for g per step),
-    // loss, backward into the grads. hiddenGradScale: the paper's 0.5 on
+    // Training: zeroGrad, forward with batch-statistics BN (step k updates
+    // the running statistics of call index k only), loss, backward into the
+    // grads. hiddenGradScale: the paper's 0.5 on
     // the gradient that g_{k+1}'s hidden input sends back into s_k, for
     // k >= 1 only (s0 gets g_1's full gradient; see the top of this file);
     // with 1.0 the gradient is the exact gradient of UnrollLoss::total
     // (what the gradient checks use). With K = 1 it changes nothing.
-    // batch.K must equal ws.unroll(), batch.B <= ws.maxBatch().
+    // batch.K must equal ws.unroll(), batch.B <= ws.maxBatch(), and
+    // ws.unroll() must equal config().unrollSteps (std::invalid_argument).
     UnrollLoss trainStep(TrainWorkspace& ws, const TrainBatch& batch, float hiddenGradScale = 0.5f);
     // The same forward and loss in Probe mode (batch statistics, running
     // stats untouched), without backward.
     UnrollLoss computeLoss(TrainWorkspace& ws, const TrainBatch& batch);
-    // One unroll in Calibrate mode: every batch norm's running statistics
-    // are SET to those of its input in this pass. A layer called several
-    // times (g K times, f K + 1 times) keeps its last call's statistics.
+    // One unroll in Calibrate mode: at every step k, each batch norm's
+    // running statistics of call index k are SET to those of its input in
+    // this pass. A K = unrollSteps batch calibrates every set; a shorter one
+    // only the sets of its steps.
     void calibrateBatchNorm(TrainWorkspace& ws, const TrainBatch& batch);
 
     // Inference (running statistics), for search. The network is only read,
@@ -128,12 +153,16 @@ public:
         virtual ~InferWorkspace() = default;
     };
     std::unique_ptr<InferWorkspace> newInferWorkspace(int maxBatch, const Backend& backend) const;
-    // obs [B][planes][area] -> hidden s0, logits, values; rewards 0.
+    // obs [B][planes][area] -> hidden s0, logits, values (f at depth 0); rewards 0.
     void initialInference(InferWorkspace& ws, const float* obs, int B, ModelOutput& out) const;
-    // hidden [B][hiddenSize], actions [B] (area = pass) -> s1, logits, values,
-    // rewards (0 without the reward head). hidden may point into out.hidden.
-    void recurrentInference(InferWorkspace& ws, const float* hidden, const int* actions, int B,
-                            ModelOutput& out) const;
+    // hidden [B][hiddenSize], actions [B] (area = pass), depths [B] >= 1 (the
+    // depth of the state each row produces) -> s, logits, values, rewards (0
+    // without the reward head). g, the reward head and f of row b use the
+    // statistics of call index min(depths[b], unrollSteps), so one batch may
+    // mix depths, and each row's bits do not depend on the other rows'
+    // depths. hidden may point into out.hidden.
+    void recurrentInference(InferWorkspace& ws, const float* hidden, const int* actions, const int* depths,
+                            int B, ModelOutput& out) const;
 
 private:
     NetConfig cfg_;

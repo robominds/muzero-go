@@ -77,29 +77,58 @@ void Conv2d::backward(const Backend& be, const float* x, const float* col, const
 
 // ---------------------------------------------------------------- BatchNorm2d
 
-BatchNorm2d::BatchNorm2d(int c_)
-    : c(c_), gamma(c_, 1.0f), beta(c_, 0.0f), ggamma(c_, 0.0f), gbeta(c_, 0.0f),
-      runMean(c_, 0.0f), runVar(c_, 1.0f) {
-    assert(c > 0);
+BatchNorm2d::BatchNorm2d(int c_, int sets_)
+    : c(c_), sets(sets_), gamma(c_, 1.0f), beta(c_, 0.0f), ggamma(c_, 0.0f), gbeta(c_, 0.0f),
+      runMean(static_cast<size_t>(sets_) * c_, 0.0f), runVar(static_cast<size_t>(sets_) * c_, 1.0f) {
+    assert(c > 0 && sets > 0);
 }
+
+namespace {
+
+// Inference batch norm of one channel folded into y = scale * x + shift.
+// forwardInfer and forwardInferRows both go through these two helpers, so a
+// value gets the same bits from either.
+inline void inferAffine(const BatchNorm2d& bn, int ch, int set, float& scale, float& shift) {
+    const size_t i = static_cast<size_t>(set) * bn.c + ch;
+    scale = bn.gamma[ch] / std::sqrt(bn.runVar[i] + BatchNorm2d::kEps);
+    shift = bn.beta[ch] - scale * bn.runMean[i];
+}
+inline void applyAffine(const float* x, size_t count, float scale, float shift, float* y) {
+    for (size_t i = 0; i < count; ++i) y[i] = scale * x[i] + shift;
+}
+
+} // namespace
 
 // Each channel is one chunk: its statistics, sums and outputs involve no
 // other channel, so the loops below run unchanged whichever thread has it.
 
-void BatchNorm2d::forwardInfer(const float* x, int M, float* y, ThreadPool* pool) const {
+void BatchNorm2d::forwardInfer(const float* x, int M, float* y, ThreadPool* pool, int set) const {
+    assert(set >= 0 && set < sets);
     parallelChunks(pool, c, [&](int ch) {
         // Fold the fixed statistics into one scale and shift per channel.
-        const float scale = gamma[ch] / std::sqrt(runVar[ch] + kEps);
-        const float shift = beta[ch] - scale * runMean[ch];
-        const float* xc = x + static_cast<size_t>(ch) * M;
-        float* yc = y + static_cast<size_t>(ch) * M;
-        for (int i = 0; i < M; ++i) yc[i] = scale * xc[i] + shift;
+        float scale, shift;
+        inferAffine(*this, ch, set, scale, shift);
+        applyAffine(x + static_cast<size_t>(ch) * M, static_cast<size_t>(M), scale, shift,
+                    y + static_cast<size_t>(ch) * M);
+    });
+}
+
+void BatchNorm2d::forwardInferRows(const float* x, int B, int A, const int* rowSets, float* y,
+                                   ThreadPool* pool) const {
+    parallelChunks(pool, c, [&](int ch) {
+        for (int b = 0; b < B; ++b) {
+            assert(rowSets[b] >= 0 && rowSets[b] < sets);
+            float scale, shift;
+            inferAffine(*this, ch, rowSets[b], scale, shift);
+            const size_t offset = (static_cast<size_t>(ch) * B + b) * A;
+            applyAffine(x + offset, static_cast<size_t>(A), scale, shift, y + offset);
+        }
     });
 }
 
 void BatchNorm2d::forwardTrain(const float* x, int M, float* y, float* xhat, float* invStd,
-                               bool updateRunning, ThreadPool* pool, float momentum) {
-    assert(M > 1);
+                               bool updateRunning, ThreadPool* pool, float momentum, int set) {
+    assert(M > 1 && set >= 0 && set < sets);
     parallelChunks(pool, c, [&](int ch) {
         const float* xc = x + static_cast<size_t>(ch) * M;
         // Two passes in double: mean first, then the variance around it
@@ -125,8 +154,9 @@ void BatchNorm2d::forwardTrain(const float* x, int M, float* y, float* xhat, flo
             // Inference sees one position at a time, so it needs population
             // estimates: unbiased variance, exponential moving averages.
             const double unbiased = var * M / (M - 1);
-            runMean[ch] = (1.0f - momentum) * runMean[ch] + momentum * static_cast<float>(mean);
-            runVar[ch] = (1.0f - momentum) * runVar[ch] + momentum * static_cast<float>(unbiased);
+            const size_t i = static_cast<size_t>(set) * c + ch;
+            runMean[i] = (1.0f - momentum) * runMean[i] + momentum * static_cast<float>(mean);
+            runVar[i] = (1.0f - momentum) * runVar[i] + momentum * static_cast<float>(unbiased);
         }
     });
 }

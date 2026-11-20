@@ -30,7 +30,7 @@ static SearchResult searchFrom(Search& s, ModelSession& session, const std::vect
         LeafRequest req = s.selectLeaf();
         if (nonRootLeaves && !std::equal(rootHidden.begin(), rootHidden.end(), req.parentHidden))
             nonRootLeaves->push_back(req.action);
-        session.recurrentInference(req.parentHidden, &req.action, 1, out);
+        session.recurrentInference(req.parentHidden, &req.action, &req.depth, 1, out);
         s.expandLeaf(out.hidden.data(), out.logits.data(), out.values[0], out.rewards[0]);
     }
     return s.result();
@@ -99,22 +99,22 @@ static void test_ucb_hand_computed() {
     assert(near(e[0].prior, 0.2f) && near(e[1].prior, 0.3f) && near(e[2].prior, 0.5f));
 
     LeafRequest r = s.selectLeaf();                           // sim 1
-    assert(r.action == A && r.parentHidden[0] == 0.0f);
+    assert(r.action == A && r.parentHidden[0] == 0.0f && r.depth == 1);
     s.expandLeaf(h[0].data(), zeros.data(), 1.0f, 0.0f);
     assert(near(s.rootEdges()[2].q, -1.0f));
 
     r = s.selectLeaf();                                       // sim 2
-    assert(r.action == B && r.parentHidden[0] == 0.0f);
+    assert(r.action == B && r.parentHidden[0] == 0.0f && r.depth == 1);
     s.expandLeaf(h[1].data(), zeros.data(), 0.2f, 0.0f);
 
     r = s.selectLeaf();                                       // sim 3: under B
-    assert(r.action == 0 && r.parentHidden[0] == h[1][0]);
+    assert(r.action == 0 && r.parentHidden[0] == h[1][0] && r.depth == 2);
     s.expandLeaf(h[2].data(), zeros.data(), -0.8f, 0.0f);
     e = s.rootEdges();
     assert(e[1].visits == 2 && near(e[1].meanValue, 0.5f) && near(e[1].q, -0.5f));
 
     r = s.selectLeaf();                                       // sim 4: under A
-    assert(r.action == 0 && r.parentHidden[0] == h[0][0]);
+    assert(r.action == 0 && r.parentHidden[0] == h[0][0] && r.depth == 2);
     s.expandLeaf(h[3].data(), zeros.data(), 0.0f, 0.0f);
     assert(s.finished());
 

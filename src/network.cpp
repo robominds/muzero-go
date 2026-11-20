@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <stdexcept>
+#include <string>
 #include "mzgo/board.hpp"
 #include "mzgo/parallel.hpp"
 #include "mzgo/rng.hpp"
@@ -12,7 +14,7 @@ namespace mzgo {
 bool NetConfig::operator==(const NetConfig& o) const {
     return boardSize == o.boardSize && history == o.history && reprBlocks == o.reprBlocks &&
            dynBlocks == o.dynBlocks && filters == o.filters && valueHidden == o.valueHidden &&
-           rewardHead == o.rewardHead;
+           rewardHead == o.rewardHead && unrollSteps == o.unrollSteps;
 }
 
 namespace {
@@ -53,7 +55,10 @@ TrainWorkspace::TrainWorkspace(const NetConfig& cfg, int maxBatch, int K, const 
     : cfg_(cfg), maxBatch_(maxBatch), K_(K), backend_(&backend), pool_(pool),
       scratch_(std::max(cfg.planes(), cfg.filters + 1), cfg.filters, maxBatch, cfg.boardSize),
       reprCache_(cfg.filters, cfg.reprBlocks, maxBatch, cfg.boardSize, scratch_) {
-    assert(maxBatch >= 1 && K >= 0);
+    assert(maxBatch >= 1);
+    if (K < 0 || K > cfg.unrollSteps)
+        throw std::invalid_argument("TrainWorkspace: K = " + std::to_string(K) + " is outside 0.." +
+                                    std::to_string(cfg.unrollSteps) + " (the network's unroll_steps)");
     const int n = cfg.boardSize, F = cfg.filters;
     const size_t M = static_cast<size_t>(maxBatch) * cfg.area();
     obs_.resize(static_cast<size_t>(cfg.planes()) * M);
@@ -80,13 +85,16 @@ const float* TrainWorkspace::rewards(int k) const {
 
 MuZeroNetwork::MuZeroNetwork(const NetConfig& cfg, uint64_t seed)
     : cfg_(cfg),
-      repr_(cfg.planes(), cfg.filters, cfg.reprBlocks),
-      dyn_(cfg.filters + 1, cfg.filters, cfg.dynBlocks),
-      pred_(cfg.filters, cfg.boardSize, cfg.valueHidden),
-      reward_(cfg.rewardHead ? ValueHead(cfg.filters, cfg.area(), cfg.valueHidden) : ValueHead()) {
+      // Running statistics per call index (see network.hpp): h once, g and
+      // the reward head for s1..sK, f for s0..sK.
+      repr_(cfg.planes(), cfg.filters, cfg.reprBlocks, 1),
+      dyn_(cfg.filters + 1, cfg.filters, cfg.dynBlocks, cfg.unrollSteps),
+      pred_(cfg.filters, cfg.boardSize, cfg.valueHidden, cfg.unrollSteps + 1),
+      reward_(cfg.rewardHead ? ValueHead(cfg.filters, cfg.area(), cfg.valueHidden, cfg.unrollSteps)
+                             : ValueHead()) {
     assert(cfg.boardSize >= kMinBoardSize && cfg.boardSize <= kMaxBoardSize);
     assert(cfg.history >= 1 && cfg.reprBlocks >= 0 && cfg.dynBlocks >= 0 && cfg.filters >= 1 &&
-           cfg.valueHidden >= 1);
+           cfg.valueHidden >= 1 && cfg.unrollSteps >= 1);
     // One generator, layers in params() order, so a seed fixes every weight;
     // the reward head last, so it leaves the other weights of a seed alone.
     Rng rng(seed);
@@ -106,11 +114,12 @@ std::vector<ParamView> MuZeroNetwork::params() {
 }
 
 std::vector<BufferView> MuZeroNetwork::buffers() {
-    std::vector<BufferView> out = repr_.buffers("repr");
-    for (BufferView& b : dyn_.buffers("dyn")) out.push_back(b);
-    for (BufferView& b : pred_.buffers("pred")) out.push_back(b);
+    // Named by call index: h and f start at k0, g and the reward head at k1.
+    std::vector<BufferView> out = repr_.buffers("repr", 0);
+    for (BufferView& b : dyn_.buffers("dyn", 1)) out.push_back(b);
+    for (BufferView& b : pred_.buffers("pred", 0)) out.push_back(b);
     if (cfg_.rewardHead)
-        for (BufferView& b : reward_.buffers("reward")) out.push_back(b);
+        for (BufferView& b : reward_.buffers("reward", 1)) out.push_back(b);
     return out;
 }
 
@@ -119,6 +128,10 @@ void MuZeroNetwork::zeroGrad() {
 }
 
 UnrollLoss MuZeroNetwork::trainStep(TrainWorkspace& ws, const TrainBatch& batch, float hiddenGradScale) {
+    if (ws.K_ != cfg_.unrollSteps)
+        throw std::invalid_argument("trainStep: the workspace unrolls " + std::to_string(ws.K_) +
+                                    " steps but the network keeps batch norm statistics for " +
+                                    std::to_string(cfg_.unrollSteps));
     zeroGrad();
     forward(ws, batch, BnMode::Train);
     UnrollLoss stats = loss(ws, batch, true);
@@ -137,8 +150,10 @@ void MuZeroNetwork::calibrateBatchNorm(TrainWorkspace& ws, const TrainBatch& bat
 
 // s0 = norm(h(obs)); (p0, v0) = f(s0); for k = 1..K:
 // s_k = norm(g(s_{k-1}, plane(a_k))), r_k = reward(s_k), (p_k, v_k) = f(s_k).
+// Batch norm statistics of call index k: f's set k, g's and the reward
+// head's set k - 1 (their sets serve s1..sK).
 void MuZeroNetwork::forward(TrainWorkspace& ws, const TrainBatch& batch, BnMode mode) {
-    assert(ws.cfg_ == cfg_);
+    assert(ws.cfg_ == cfg_ && ws.K_ <= cfg_.unrollSteps);
     assert(batch.B >= 1 && batch.B <= ws.maxBatch_ && batch.K == ws.K_);
     const Backend& be = *ws.backend_;
     ThreadPool* pool = ws.pool_;
@@ -149,20 +164,20 @@ void MuZeroNetwork::forward(TrainWorkspace& ws, const TrainBatch& batch, BnMode 
     repr_.forward(be, ws.obs_.data(), B, n, ws.reprCache_, mode, pool);
     normalizeHidden(ws.reprCache_.output(), B, F, A, ws.hidden_[0].data(), ws.minMax_[0].data(),
                     ws.state_[0].data(), pool);
-    pred_.forward(be, ws.state_[0].data(), B, n, ws.heads_[0], mode, pool);
+    pred_.forward(be, ws.state_[0].data(), B, n, ws.heads_[0], mode, pool, BnSets{0});
 
     for (int k = 1; k <= K; ++k) {
         float* in = ws.state_[k - 1].data();     // s_{k-1} in channels 0..F-1
         writeActionPlane(batch.actions.data() + (k - 1), K, B, A, in + F * M);
-        dyn_.forward(be, in, B, n, ws.dynCaches_[k - 1], mode, pool);
+        dyn_.forward(be, in, B, n, ws.dynCaches_[k - 1], mode, pool, BnSets{k - 1});
         normalizeHidden(ws.dynCaches_[k - 1].output(), B, F, A, ws.hidden_[k].data(), ws.minMax_[k].data(),
                         ws.state_[k].data(), pool);
         // The reward head reads the normalized s_k, like f: the design's
         // "dynamics -> (s_k, r_k)" read as the reward being a function of
         // the state g produced (my reading; the paper does not say which).
         if (cfg_.rewardHead)
-            reward_.forward(be, ws.state_[k].data(), B, n, ws.rewardCaches_[k - 1], mode, pool);
-        pred_.forward(be, ws.state_[k].data(), B, n, ws.heads_[k], mode, pool);
+            reward_.forward(be, ws.state_[k].data(), B, n, ws.rewardCaches_[k - 1], mode, pool, BnSets{k - 1});
+        pred_.forward(be, ws.state_[k].data(), B, n, ws.heads_[k], mode, pool, BnSets{k});
     }
 }
 
@@ -302,7 +317,7 @@ struct InferBuffers : MuZeroNetwork::InferWorkspace {
           reward(cfg.valueHidden, maxBatch, cfg.area()),
           obs(static_cast<size_t>(cfg.planes()) * maxBatch * cfg.area()),
           state(static_cast<size_t>(cfg.filters + 1) * maxBatch * cfg.area()),
-          minMax(maxBatch) {}
+          minMax(maxBatch), dynSets(maxBatch), predSets(maxBatch) {}
     int maxBatch;
     const Backend* backend;
     Scratch scratch;
@@ -312,6 +327,7 @@ struct InferBuffers : MuZeroNetwork::InferWorkspace {
     std::vector<float> obs;        // [planes][B][A]
     std::vector<float> state;      // [F + 1][B][A]: s (channel-major), then the action plane
     std::vector<MinMaxCache> minMax;
+    std::vector<int> dynSets, predSets;   // [B]: each row's batch norm set in g (and reward), in f
 };
 
 } // namespace
@@ -341,26 +357,36 @@ void MuZeroNetwork::initialInference(InferWorkspace& iws, const float* obs, int 
     out.rewards.assign(B, 0.0f);
 }
 
-void MuZeroNetwork::recurrentInference(InferWorkspace& iws, const float* hidden, const int* actions, int B,
-                                       ModelOutput& out) const {
+void MuZeroNetwork::recurrentInference(InferWorkspace& iws, const float* hidden, const int* actions,
+                                       const int* depths, int B, ModelOutput& out) const {
     InferBuffers& ws = static_cast<InferBuffers&>(iws);
     assert(B >= 1 && B <= ws.maxBatch);
+    // Depth d is call index min(d, K): f's set d, g's and the reward head's set d - 1.
+    for (int b = 0; b < B; ++b) {
+        assert(depths[b] >= 1);
+        const int k = std::min(depths[b], cfg_.unrollSteps);
+        ws.dynSets[b] = k - 1;
+        ws.predSets[b] = k;
+    }
+    const BnSets dynSets{0, ws.dynSets.data()}, predSets{0, ws.predSets.data()};
     const Backend& be = *ws.backend;
     const int n = cfg_.boardSize, A = cfg_.area(), F = cfg_.filters;
     const size_t M = static_cast<size_t>(B) * A;
     // Read hidden (which may live in out.hidden) before out is resized.
     toChannelMajor(hidden, B, F, A, ws.state.data());
     writeActionPlane(actions, 1, B, A, ws.state.data() + F * M);
-    const_cast<Trunk&>(dyn_).forward(be, ws.state.data(), B, n, ws.dynCache, BnMode::Infer);
+    const_cast<Trunk&>(dyn_).forward(be, ws.state.data(), B, n, ws.dynCache, BnMode::Infer, nullptr, dynSets);
     out.hidden.resize(static_cast<size_t>(B) * cfg_.hiddenSize());
     normalizeHidden(ws.dynCache.output(), B, F, A, out.hidden.data(), ws.minMax.data(), ws.state.data(), nullptr);
     if (cfg_.rewardHead) {
-        const_cast<ValueHead&>(reward_).forward(be, ws.state.data(), B, n, ws.reward, BnMode::Infer);
+        const_cast<ValueHead&>(reward_).forward(be, ws.state.data(), B, n, ws.reward, BnMode::Infer, nullptr,
+                                                dynSets);
         out.rewards.assign(ws.reward.values.begin(), ws.reward.values.begin() + B);
     } else {
         out.rewards.assign(B, 0.0f);
     }
-    const_cast<PredictionHeads&>(pred_).forward(be, ws.state.data(), B, n, ws.heads, BnMode::Infer);
+    const_cast<PredictionHeads&>(pred_).forward(be, ws.state.data(), B, n, ws.heads, BnMode::Infer, nullptr,
+                                                predSets);
     out.logits.assign(ws.heads.logits.begin(), ws.heads.logits.begin() + static_cast<size_t>(B) * cfg_.actions());
     out.values.assign(ws.heads.value.values.begin(), ws.heads.value.values.begin() + B);
 }
@@ -376,8 +402,9 @@ public:
     void initialInference(const float* observations, int B, ModelOutput& out) override {
         net_.initialInference(*ws_, observations, B, out);
     }
-    void recurrentInference(const float* hidden, const int* actions, int B, ModelOutput& out) override {
-        net_.recurrentInference(*ws_, hidden, actions, B, out);
+    void recurrentInference(const float* hidden, const int* actions, const int* depths, int B,
+                            ModelOutput& out) override {
+        net_.recurrentInference(*ws_, hidden, actions, depths, B, out);
     }
 private:
     const MuZeroNetwork& net_;

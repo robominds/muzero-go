@@ -86,22 +86,6 @@ std::string valueOf(const RunConfig& cfg, const std::string& key) {
     return "";
 }
 
-// The first K steps of an unroll of b.K >= K steps, sample by sample.
-TrainBatch truncateUnroll(const TrainBatch& b, int K, const NetConfig& cfg) {
-    const int A = cfg.actions();
-    TrainBatch t;
-    t.resize(b.B, K, cfg.planes(), cfg.area(), A);
-    t.observations = b.observations;
-    for (int s = 0; s < b.B; ++s) {
-        std::copy_n(b.actions.begin() + s * b.K, K, t.actions.begin() + s * K);
-        std::copy_n(b.policyTargets.begin() + s * (b.K + 1) * A, (K + 1) * A, t.policyTargets.begin() + s * (K + 1) * A);
-        std::copy_n(b.policyMask.begin() + s * (b.K + 1), K + 1, t.policyMask.begin() + s * (K + 1));
-        std::copy_n(b.valueTargets.begin() + s * (b.K + 1), K + 1, t.valueTargets.begin() + s * (K + 1));
-        std::copy_n(b.rewardTargets.begin() + s * (b.K + 1), K + 1, t.rewardTargets.begin() + s * (K + 1));
-    }
-    return t;
-}
-
 // The SGF of a self-play game; the boards are replayed for the score.
 std::string sgfOf(const GameRecord& rec, int maxMoves, int generation, int index) {
     Game game(rec.boardSize, rec.komi, maxMoves);
@@ -127,6 +111,7 @@ NetConfig netConfigFrom(const RunConfig& c) {
     n.filters = c.filters;
     n.valueHidden = c.valueHidden;
     n.rewardHead = c.rewardHead;
+    n.unrollSteps = c.unrollSteps;
     return n;
 }
 
@@ -176,11 +161,6 @@ Trainer Trainer::resume(const std::string& runDir, const std::vector<std::string
             throw std::invalid_argument(key + ": an architecture key cannot change on resume (the run has " +
                                         valueOf(saved, key) + ", the override says " + valueOf(cfg, key) + ")");
     }
-    // Not an architecture key, but log.csv's header (written once, by
-    // startNew) has one column per unroll step, so every row must keep K.
-    if (cfg.unrollSteps != saved.unrollSteps)
-        throw std::invalid_argument("unroll_steps: cannot change on resume (log.csv has columns for " +
-                                    std::to_string(saved.unrollSteps) + " unroll steps)");
     validate(cfg);
 
     // Everything is read before the Trainer is built, so any error below is
@@ -241,12 +221,10 @@ Trainer Trainer::resume(const std::string& runDir, const std::vector<std::string
 // activations. Calibration sets them from real inputs: positions of games of
 // uniformly random legal moves, one batch of batch_size samples.
 //
-// A Calibrate pass SETS each layer's statistics to those of its input in
-// that pass, and a layer reused in the unroll (g K times, f K + 1 times)
-// keeps only its last call's statistics. One K-step pass would leave g with
-// step K's statistics and f with s^K's. So two passes: first K = 1, which
-// sets g (and the reward head) from its first call, on s0; then K = 0,
-// which sets h and f from the real position's s0 and leaves g as it is.
+// A Calibrate pass SETS, at every unroll step k, each layer's statistics of
+// call index k to those of its input in that pass (network.hpp keeps one
+// set per step), so one K-step pass calibrates every set: h and f on the
+// real positions' s0, g, the reward head and f on s1..sK.
 void Trainer::calibrateBatchNorm() {
     const NetConfig netCfg = net_->config();
     const int n = cfg_.boardSize, maxMoves = cfg_.resolvedMaxMoves(), A = netCfg.actions();
@@ -269,10 +247,7 @@ void Trainer::calibrateBatchNorm() {
     TrainBatch batch;
     Rng rng(deriveSeed(cfg_.seed, 0xCA1, 1));
     buffer.sampleBatch(cfg_.batchSize, cfg_.unrollSteps, cfg_.history, false, rng, batch);
-    for (int K : {1, 0}) {
-        TrainWorkspace ws(netCfg, cfg_.batchSize, K, *backend_, pool_.get());
-        net_->calibrateBatchNorm(ws, truncateUnroll(batch, K, netCfg));
-    }
+    net_->calibrateBatchNorm(*workspace_, batch);
 }
 
 void Trainer::writeState() const {

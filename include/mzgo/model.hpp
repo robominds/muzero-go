@@ -4,6 +4,9 @@
 // observation to a hidden state plus policy and value (representation then
 // prediction); recurrentInference maps a hidden state and an action to the
 // next hidden state plus reward, policy and value (dynamics then prediction).
+// recurrentInference also gets each row's depth (1 for a child of the root,
+// path length in general): the network keeps batch norm statistics per
+// unroll step and picks them by depth (network.hpp).
 #pragma once
 #include <memory>
 #include <vector>
@@ -28,7 +31,8 @@ class ModelSession {               // one per worker thread; not thread-safe
 public:
     virtual ~ModelSession() = default;
     virtual void initialInference(const float* observations /*[B][planes][area]*/, int B, ModelOutput& out) = 0;
-    virtual void recurrentInference(const float* hidden /*[B][hiddenSize]*/, const int* actions, int B,
+    virtual void recurrentInference(const float* hidden /*[B][hiddenSize]*/, const int* actions,
+                                    const int* depths /*[B], >= 1: depth of the state produced*/, int B,
                                     ModelOutput& out) = 0;
 };
 

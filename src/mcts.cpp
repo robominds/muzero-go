@@ -107,7 +107,8 @@ LeafRequest Search::selectLeaf() {
     }
     pending_ = true;
     const Node& parent = nodes_[path_[path_.size() - 2]];
-    return {hidden_.data() + static_cast<size_t>(parent.hiddenSlot) * dims_.hiddenSize(), nodes_[node].action};
+    return {hidden_.data() + static_cast<size_t>(parent.hiddenSlot) * dims_.hiddenSize(), nodes_[node].action,
+            static_cast<int>(path_.size()) - 1};
 }
 
 void Search::expandLeaf(const float* hidden, const float* logits, float value, float reward) {
@@ -231,7 +232,7 @@ SearchResult runSearch(Search& search, ModelSession& session, const Game& game, 
                      previousMoveWasPass, rng);
     while (!search.finished()) {
         const LeafRequest req = search.selectLeaf();
-        session.recurrentInference(req.parentHidden, &req.action, 1, step);
+        session.recurrentInference(req.parentHidden, &req.action, &req.depth, 1, step);
         search.expandLeaf(step.hidden.data(), step.logits.data(), step.values[0], step.rewards[0]);
     }
     return search.result();

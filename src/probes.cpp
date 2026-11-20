@@ -74,7 +74,9 @@ void forEachImagined(const Model& model, const std::vector<GameRecord>& games, c
                 }
             }
             if (next.empty()) break;
-            session->recurrentInference(hidden.data(), actions.data(), static_cast<int>(next.size()), out);
+            const std::vector<int> depths(next.size(), k + 1);   // every row produces s_{k+1}
+            session->recurrentInference(hidden.data(), actions.data(), depths.data(), static_cast<int>(next.size()),
+                                        out);
             active.swap(next);
         }
     }

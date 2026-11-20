@@ -10,11 +10,14 @@
 
 namespace mzgo {
 
-// Format: magic "MZGN" (u32 0x4E475A4D, bytes 'M' 'Z' 'G' 'N'), u32 version 1,
-// NetConfig as 7 x i32 (boardSize, history, reprBlocks, dynBlocks, filters,
-// valueHidden, rewardHead 0/1), u32 tensor count, then per tensor: name
-// (str), u64 size, floats. Params in params() order, then buffers in
-// buffers() order. Written with writeFileAtomically.
+// Format: magic "MZGN" (u32 0x4E475A4D, bytes 'M' 'Z' 'G' 'N'), u32 version 2,
+// NetConfig as 8 x i32 (boardSize, history, reprBlocks, dynBlocks, filters,
+// valueHidden, rewardHead 0/1, unrollSteps), u32 tensor count, then per
+// tensor: name (str), u64 size, floats. Params in params() order, then
+// buffers in buffers() order, one runMean and runVar per batch norm and
+// unroll step ("dyn.block0.bn1.runMean.k3"). Version 1 (one set of batch
+// norm statistics per layer, no unrollSteps) is refused with a message
+// saying the format changed. Written with writeFileAtomically.
 void saveNetwork(const MuZeroNetwork& net, const std::string& path);
 // Throws std::runtime_error naming path on a missing file, bad magic,
 // version, shape, tensor name or size, truncation or trailing data.

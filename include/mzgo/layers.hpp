@@ -45,22 +45,35 @@ struct Conv2d {
                   int B, int n, float* dcol, float* dx, ThreadPool* pool = nullptr);
 };
 
+// Batch norm normalizes each channel with the batch's mean and variance in
+// training and with running estimates of them at inference. A layer may keep
+// several SETS of running statistics (runMean/runVar [sets][c]) while its
+// learnable gamma and beta stay shared: MuZero's dynamics and prediction are
+// called once per unroll step, and the activations they see drift with the
+// step, so each call index keeps its own statistics (see network.hpp).
 struct BatchNorm2d {
     static constexpr float kEps = 1e-5f;
     static constexpr float kMomentum = 0.1f;   // running = (1 - m) * running + m * batch
-    int c = 0;
-    std::vector<float> gamma, beta, ggamma, gbeta, runMean, runVar;  // gamma=1, beta=0, runVar=1 initially
+    int c = 0, sets = 1;
+    std::vector<float> gamma, beta, ggamma, gbeta;   // [c]; gamma=1, beta=0 initially
+    std::vector<float> runMean, runVar;              // [sets][c]; 0 and 1 initially
     BatchNorm2d() = default;
-    explicit BatchNorm2d(int c);
-    // y = gamma * (x - runMean) / sqrt(runVar + eps) + beta
-    void forwardInfer(const float* x, int M, float* y, ThreadPool* pool = nullptr) const;
+    explicit BatchNorm2d(int c, int sets = 1);
+    // y = gamma * (x - runMean[set]) / sqrt(runVar[set] + eps) + beta
+    void forwardInfer(const float* x, int M, float* y, ThreadPool* pool = nullptr, int set = 0) const;
+    // The same with a set per sample: x [c][B][A] (M = B * A), sample b
+    // normalized with set rowSets[b]. Each value gets exactly the bits
+    // forwardInfer gives it with that set, whatever the other samples use.
+    void forwardInferRows(const float* x, int B, int A, const int* rowSets, float* y,
+                          ThreadPool* pool = nullptr) const;
     // Batch statistics (biased variance). Saves xhat [c][M] and invStd [c].
-    // If updateRunning, updates runMean and runVar (unbiased variance M/(M-1))
-    // as running = (1 - momentum) * running + momentum * batch. momentum = 1
-    // sets them to the batch's statistics exactly: batch norm calibration
-    // (batch norm calibration).
+    // If updateRunning, updates set `set` of runMean and runVar (unbiased
+    // variance M/(M-1)) as running = (1 - momentum) * running + momentum *
+    // batch. momentum = 1 sets them to the batch's statistics exactly: batch
+    // norm calibration.
     void forwardTrain(const float* x, int M, float* y, float* xhat, float* invStd,
-                      bool updateRunning, ThreadPool* pool = nullptr, float momentum = kMomentum);
+                      bool updateRunning, ThreadPool* pool = nullptr, float momentum = kMomentum,
+                      int set = 0);
     // Accumulates ggamma, gbeta; writes dx (overwrite); dx may alias dy (callers rely on it).
     void backward(const float* dy, const float* xhat, const float* invStd, int M, float* dx,
                   ThreadPool* pool = nullptr);

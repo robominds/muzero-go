@@ -60,7 +60,7 @@ static void test_override() {
     assert(c.simulations == 50);
     applyOverride(c, " reward_head = true ");
     assert(c.rewardHead);
-    assert(architectureKeys().size() == 7);
+    assert(architectureKeys().size() == 8);   // unroll_steps among them (per-step batch norm statistics)
     std::printf("test_override passed\n");
 }
 

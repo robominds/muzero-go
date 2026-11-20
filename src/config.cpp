@@ -187,7 +187,8 @@ std::string configToString(const RunConfig& cfg) {
 }
 
 std::vector<std::string> architectureKeys() {
-    return {"board_size", "history", "repr_blocks", "dyn_blocks", "filters", "value_hidden", "reward_head"};
+    return {"board_size", "history", "repr_blocks", "dyn_blocks", "filters", "value_hidden", "reward_head",
+            "unroll_steps"};
 }
 
 void validate(const RunConfig& c) {
@@ -197,7 +198,7 @@ void validate(const RunConfig& c) {
     if (c.dynBlocks < 0) bad("dyn_blocks", "must be >= 0");
     if (c.filters < 1) bad("filters", "must be >= 1");
     if (c.valueHidden < 1) bad("value_hidden", "must be >= 1");
-    if (c.unrollSteps < 1) bad("unroll_steps", "must be >= 1");
+    if (c.unrollSteps < 1 || c.unrollSteps > 64) bad("unroll_steps", "must be in 1..64");   // checkpoint.cpp's limit
     if (c.batchSize < 1) bad("batch_size", "must be >= 1");
     if (c.simulations < 1) bad("simulations", "must be >= 1");
     if (c.arenaSimulations < 1) bad("arena_simulations", "must be >= 1");

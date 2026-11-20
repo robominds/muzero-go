@@ -42,7 +42,7 @@ void playGroup(const Model& model, const SelfPlayConfig& cfg, uint64_t seed, int
     for (size_t k = 0; k < live.size(); ++k) index[k] = begin + static_cast<int>(k);
 
     std::vector<float> obs, parents;
-    std::vector<int> actions, batch;               // batch: positions in `live` of this call's rows
+    std::vector<int> actions, depths, batch;       // batch: positions in `live` of this call's rows
     ModelOutput out;
     while (!live.empty()) {
         // 1. Games starting a move: one batched initial inference for their roots.
@@ -67,16 +67,19 @@ void playGroup(const Model& model, const SelfPlayConfig& cfg, uint64_t seed, int
         // 2. One simulation in every unfinished search: one batched recurrent inference.
         batch.clear();
         actions.clear();
+        depths.clear();
         parents.clear();
         for (size_t k = 0; k < live.size(); ++k) {
             if (live[k]->search.finished()) continue;
             const LeafRequest req = live[k]->search.selectLeaf();
             batch.push_back(static_cast<int>(k));
             actions.push_back(req.action);
+            depths.push_back(req.depth);         // the games' leaves sit at different depths
             parents.insert(parents.end(), req.parentHidden, req.parentHidden + hs);
         }
         if (!batch.empty()) {
-            session.recurrentInference(parents.data(), actions.data(), static_cast<int>(batch.size()), out);
+            session.recurrentInference(parents.data(), actions.data(), depths.data(), static_cast<int>(batch.size()),
+                                       out);
             for (size_t b = 0; b < batch.size(); ++b)
                 live[batch[b]]->search.expandLeaf(out.hidden.data() + b * hs, out.logits.data() + b * dims.actions(),
                                                   out.values[b], out.rewards[b]);

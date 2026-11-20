@@ -12,7 +12,8 @@
 //     (uniform policy), value 0, reward 0. RootHook(observation, out).
 //   - recurrent inference: hidden = a hash of (parent hidden, action), so
 //     different imagined paths reach different hidden states; logits all 0,
-//     value 0, reward 0. StepHook(parentHidden, action, out).
+//     value 0, reward 0. StepHook(parentHidden, action, out); out.depth holds
+//     the depth the caller passed (input only: the default ignores it).
 // Hidden values lie in [0, 1), like the real model's normalized hidden state.
 // Each batch row is computed on its own, so outputs never depend on batch
 // size or composition. Hooks are called from whichever thread runs the
@@ -38,6 +39,7 @@ struct FakeOutput {
     std::vector<float> hidden;   // [hiddenSize]
     std::vector<float> logits;   // [actions]
     float value = 0.0f, reward = 0.0f;
+    int depth = 0;               // recurrent inference: the row's depth (0 for initial inference)
 };
 
 class FakeModel : public Model {
@@ -84,10 +86,12 @@ private:
             });
         }
 
-        void recurrentInference(const float* hidden, const int* actions, int B,
+        void recurrentInference(const float* hidden, const int* actions, const int* depths, int B,
                                 ModelOutput& out) override {
             const int hs = m_.dims_.hiddenSize();
             run(B, out, [&](int b, FakeOutput& o) {
+                assert(depths[b] >= 1);
+                o.depth = depths[b];
                 const float* parent = hidden + static_cast<size_t>(b) * hs;
                 fillHidden(hashFloats(parent, hs, deriveSeed(static_cast<uint64_t>(actions[b]))), hs,
                            o.hidden.data());
@@ -110,6 +114,7 @@ private:
                 o.logits.assign(na, 0.0f);
                 o.value = 0.0f;
                 o.reward = 0.0f;
+                o.depth = 0;
                 fill(b, o);
                 assert(static_cast<int>(o.hidden.size()) == hs && static_cast<int>(o.logits.size()) == na);
                 std::copy(o.hidden.begin(), o.hidden.end(), out.hidden.begin() + static_cast<size_t>(b) * hs);

@@ -99,13 +99,14 @@ int main(int argc, char** argv) {
             else if (name == "blocks") cfg.reprBlocks = cfg.dynBlocks = parseInt(name, value, 0, 64);
             else if (name == "filters") cfg.filters = cfg.valueHidden = parseInt(name, value, 1, 1024);
             else if (name == "batch") batch = parseInt(name, value, 2, 4096);
-            else if (name == "unroll") unroll = parseInt(name, value, 0, 64);
+            else if (name == "unroll") unroll = parseInt(name, value, 1, 64);
             else if (name == "group") group = parseInt(name, value, 1, 4096);
             else if (name == "backend") backendName = value;
             else if (name == "threads") threads = parseInt(name, value, 0, 256);
             else if (name == "seconds") seconds = parseInt(name, value, 0, 3600);
             else throw std::invalid_argument("unknown option '" + arg + "'");
         }
+        cfg.unrollSteps = unroll;   // the network keeps batch norm statistics for this K
         const std::unique_ptr<Backend> backend = makeBackend(backendName);
         const int trainThreads = resolveTrainThreads(threads);
         std::printf("network: %dx%d, %d+%d blocks, %d filters, value hidden %d; backend %s\n", cfg.boardSize,
@@ -129,8 +130,10 @@ int main(int argc, char** argv) {
             session->initialInference(obs.observations.data(), group, root);
             std::vector<int> actions(group);
             for (int& a : actions) a = rng.below(cfg.actions());
+            const std::vector<int> depths(group, 1);
             const double s = secondsPerCall(
-                [&] { session->recurrentInference(root.hidden.data(), actions.data(), group, child); }, seconds);
+                [&] { session->recurrentInference(root.hidden.data(), actions.data(), depths.data(), group, child); },
+                seconds);
             std::printf("recurrent inference: batch %d, 1 thread: %.0f inferences/s (%.3f ms/call)\n", group,
                         group / s, 1e3 * s);
         }

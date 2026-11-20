@@ -9,7 +9,9 @@
 //
 // Keys are the snake_case spelling of the field names (boardSize -> board_size).
 // The "architecture keys" are the ones that fix the shape of the network's
-// weights; a checkpoint can only be loaded into a run that agrees on them.
+// weights and buffers (unroll_steps among them: batch norm keeps running
+// statistics per unroll step); a checkpoint can only be loaded into a run
+// that agrees on them.
 #pragma once
 #include <cstdint>
 #include <string>
@@ -45,7 +47,7 @@ RunConfig parseConfigFile(const std::string& path);          // '#' comments, "k
 RunConfig parseConfigString(const std::string& text);        // same, from memory
 void applyOverride(RunConfig& cfg, const std::string& keyEqualsValue);  // --set key=value
 std::string configToString(const RunConfig& cfg);            // every key, canonical, re-parseable
-std::vector<std::string> architectureKeys();                 // keys that fix the network's weight shapes
+std::vector<std::string> architectureKeys();                 // keys that fix the network's tensor shapes
 void validate(const RunConfig& cfg);                         // range checks
 
 }  // namespace mzgo

@@ -11,10 +11,12 @@ namespace mzgo {
 namespace {
 
 constexpr uint32_t kMagic = 0x4E475A4D;   // bytes 'M' 'Z' 'G' 'N' when written little-endian
-constexpr uint32_t kVersion = 1;
+// Version 2: batch norm running statistics per unroll step (network.hpp),
+// so the header carries unrollSteps and the buffers are named per set.
+constexpr uint32_t kVersion = 2;
 // Shape limits for a header to be believed: they keep a corrupt file from
 // asking for an absurd allocation.
-constexpr int kMaxHistory = 16, kMaxBlocks = 64, kMaxFilters = 1024, kMaxValueHidden = 1024;
+constexpr int kMaxHistory = 16, kMaxBlocks = 64, kMaxFilters = 1024, kMaxValueHidden = 1024, kMaxUnroll = 64;
 
 // A problem found in the file's contents (as opposed to running out of data).
 struct FormatError : std::runtime_error {
@@ -37,6 +39,10 @@ std::vector<Tensor> tensorsOf(MuZeroNetwork& net) {
 NetConfig readHeader(BinaryReader& r) {
     if (r.u32() != kMagic) throw FormatError("not an MZGN checkpoint");
     const uint32_t version = r.u32();
+    if (version == 1)
+        throw FormatError("checkpoint format version 1 is no longer supported: the format changed to version 2, "
+                          "which keeps batch norm statistics per unroll step; networks and runs saved before "
+                          "that change cannot be loaded or resumed");
     if (version != kVersion) throw FormatError("unsupported version " + std::to_string(version));
     NetConfig cfg;
     cfg.boardSize = r.i32();
@@ -48,10 +54,11 @@ NetConfig readHeader(BinaryReader& r) {
     const int32_t reward = r.i32();
     if (reward != 0 && reward != 1) throw FormatError("invalid reward head flag in header");
     cfg.rewardHead = reward == 1;
+    cfg.unrollSteps = r.i32();
     if (cfg.boardSize < kMinBoardSize || cfg.boardSize > kMaxBoardSize || cfg.history < 1 ||
         cfg.history > kMaxHistory || cfg.reprBlocks < 0 || cfg.reprBlocks > kMaxBlocks || cfg.dynBlocks < 0 ||
         cfg.dynBlocks > kMaxBlocks || cfg.filters < 1 || cfg.filters > kMaxFilters || cfg.valueHidden < 1 ||
-        cfg.valueHidden > kMaxValueHidden) {
+        cfg.valueHidden > kMaxValueHidden || cfg.unrollSteps < 1 || cfg.unrollSteps > kMaxUnroll) {
         throw FormatError("invalid network shape in header");
     }
     return cfg;
@@ -66,6 +73,7 @@ void writeNetwork(BinaryWriter& w, const MuZeroNetwork& net) {
     for (int v : {cfg.boardSize, cfg.history, cfg.reprBlocks, cfg.dynBlocks, cfg.filters, cfg.valueHidden})
         w.i32(v);
     w.i32(cfg.rewardHead ? 1 : 0);
+    w.i32(cfg.unrollSteps);
     // params() hands out writable views; here they are only read.
     const std::vector<Tensor> tensors = tensorsOf(const_cast<MuZeroNetwork&>(net));
     w.u32(static_cast<uint32_t>(tensors.size()));

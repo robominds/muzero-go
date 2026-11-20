@@ -96,17 +96,18 @@ static void test_rules_probe_counts() {
     auto session = model.newSession(1);
     ModelOutput out;
     std::vector<float> probs(26);
+    const int depth = 1;                      // one step from the real position
     double occupied0to1 = 0;
     encodeRecordPosition(rec, 0, cfg.history, 0, obs.data());
     session->initialInference(obs.data(), 1, out);
-    session->recurrentInference(out.hidden.data(), &rec.moves[0], 1, out);
+    session->recurrentInference(out.hidden.data(), &rec.moves[0], &depth, 1, out);
     softmax(out.logits.data(), 26, probs.data());
     for (int pt : {parseAction("B4", 5), parseAction("D2", 5), parseAction("C3", 5)}) occupied0to1 += probs[pt];
     // From t = 1 to position 2 (White passed): the same 3 stones.
     double occupied1to2 = 0;
     encodeRecordPosition(rec, 1, cfg.history, 0, obs.data());
     session->initialInference(obs.data(), 1, out);
-    session->recurrentInference(out.hidden.data(), &rec.moves[1], 1, out);
+    session->recurrentInference(out.hidden.data(), &rec.moves[1], &depth, 1, out);
     softmax(out.logits.data(), 26, probs.data());
     for (int pt : {parseAction("B4", 5), parseAction("D2", 5), parseAction("C3", 5)}) occupied1to2 += probs[pt];
 

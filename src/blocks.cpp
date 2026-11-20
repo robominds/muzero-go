@@ -12,14 +12,18 @@ namespace {
 // Samples per chunk of a per-sample loop on the pool.
 constexpr size_t kSampleChunk = 16;
 
-// Batch norm forward in the given mode (see BnMode).
-void bnForward(BatchNorm2d& bn, const float* x, int M, float* y, float* xhat, float* invStd, BnMode mode,
-               ThreadPool* pool) {
+// Batch norm forward in the given mode (see BnMode) on x [c][B][A], M = B * A.
+void bnForward(BatchNorm2d& bn, const float* x, int B, int A, float* y, float* xhat, float* invStd, BnMode mode,
+               ThreadPool* pool, BnSets sets) {
+    const int M = B * A;
     switch (mode) {
-        case BnMode::Infer: bn.forwardInfer(x, M, y, pool); break;
-        case BnMode::Train: bn.forwardTrain(x, M, y, xhat, invStd, true, pool); break;
+        case BnMode::Infer:
+            if (sets.rows) bn.forwardInferRows(x, B, A, sets.rows, y, pool);
+            else bn.forwardInfer(x, M, y, pool, sets.set);
+            break;
+        case BnMode::Train: bn.forwardTrain(x, M, y, xhat, invStd, true, pool, BatchNorm2d::kMomentum, sets.set); break;
         case BnMode::Probe: bn.forwardTrain(x, M, y, xhat, invStd, false, pool); break;
-        case BnMode::Calibrate: bn.forwardTrain(x, M, y, xhat, invStd, true, pool, 1.0f); break;
+        case BnMode::Calibrate: bn.forwardTrain(x, M, y, xhat, invStd, true, pool, 1.0f, sets.set); break;
     }
 }
 
@@ -34,9 +38,13 @@ void linearParams(std::vector<ParamView>& out, const std::string& prefix, Linear
     out.push_back({prefix + ".w", l.w.data(), l.gw.data(), l.w.size(), true});
     out.push_back({prefix + ".b", l.b.data(), l.gb.data(), l.b.size(), false});
 }
-void bnBuffers(std::vector<BufferView>& out, const std::string& prefix, BatchNorm2d& b) {
-    out.push_back({prefix + ".runMean", b.runMean.data(), b.runMean.size()});
-    out.push_back({prefix + ".runVar", b.runVar.data(), b.runVar.size()});
+void bnBuffers(std::vector<BufferView>& out, const std::string& prefix, BatchNorm2d& b, int firstK) {
+    const size_t c = static_cast<size_t>(b.c);
+    for (int s = 0; s < b.sets; ++s) {
+        const std::string k = ".k" + std::to_string(firstK + s);
+        out.push_back({prefix + ".runMean" + k, b.runMean.data() + s * c, c});
+        out.push_back({prefix + ".runVar" + k, b.runVar.data() + s * c, c});
+    }
 }
 
 } // namespace
@@ -120,12 +128,12 @@ Scratch::Scratch(int maxCin, int filters, int maxBatch, int n) {
 
 // ---------------------------------------------------------------- trunk
 
-Trunk::Trunk(int cin_, int filters_, int nblocks)
-    : cin(cin_), filters(filters_), stemConv(cin_, filters_, 3), stemBn(filters_) {
+Trunk::Trunk(int cin_, int filters_, int nblocks, int statSets)
+    : cin(cin_), filters(filters_), stemConv(cin_, filters_, 3), stemBn(filters_, statSets) {
     assert(cin >= 1 && filters >= 1 && nblocks >= 0);
     for (int i = 0; i < nblocks; ++i)
-        blocks.push_back({Conv2d(filters, filters, 3), BatchNorm2d(filters), Conv2d(filters, filters, 3),
-                          BatchNorm2d(filters)});
+        blocks.push_back({Conv2d(filters, filters, 3), BatchNorm2d(filters, statSets), Conv2d(filters, filters, 3),
+                          BatchNorm2d(filters, statSets)});
 }
 
 void Trunk::init(Rng& rng) {
@@ -154,7 +162,7 @@ TrunkCache::TrunkCache(int filters, int nblocks, int maxBatch, int n, Scratch& s
 }
 
 void Trunk::forward(const Backend& be, const float* x, int B, int n, TrunkCache& c, BnMode mode,
-                    ThreadPool* pool) {
+                    ThreadPool* pool, BnSets sets) {
     assert(c.blocks.size() == blocks.size());
     assert(static_cast<size_t>(filters) * B * n * n <= c.stemOut.size());
     const int M = B * n * n;
@@ -164,7 +172,8 @@ void Trunk::forward(const Backend& be, const float* x, int B, int n, TrunkCache&
 
     // Stem: conv3x3 -> BN -> ReLU.
     stemConv.forward(be, x, B, n, col, convOut, pool);
-    bnForward(stemBn, convOut, M, c.stemOut.data(), c.stemXhat.data(), c.stemInvStd.data(), mode, pool);
+    bnForward(stemBn, convOut, B, n * n, c.stemOut.data(), c.stemXhat.data(), c.stemInvStd.data(), mode, pool,
+              sets);
     reluForward(c.stemOut.data(), size, pool);
 
     // Residual blocks: conv -> BN -> ReLU -> conv -> BN -> + input -> ReLU.
@@ -173,10 +182,12 @@ void Trunk::forward(const Backend& be, const float* x, int B, int n, TrunkCache&
         ResidualBlock& blk = blocks[i];
         TrunkCache::Block& buf = c.blocks[i];
         blk.conv1.forward(be, in, B, n, col, convOut, pool);
-        bnForward(blk.bn1, convOut, M, buf.act1.data(), buf.xhat1.data(), buf.invStd1.data(), mode, pool);
+        bnForward(blk.bn1, convOut, B, n * n, buf.act1.data(), buf.xhat1.data(), buf.invStd1.data(), mode, pool,
+                  sets);
         reluForward(buf.act1.data(), size, pool);
         blk.conv2.forward(be, buf.act1.data(), B, n, col, convOut, pool);
-        bnForward(blk.bn2, convOut, M, buf.out.data(), buf.xhat2.data(), buf.invStd2.data(), mode, pool);
+        bnForward(blk.bn2, convOut, B, n * n, buf.out.data(), buf.xhat2.data(), buf.invStd2.data(), mode, pool,
+                  sets);
         addInto(buf.out.data(), in, size, pool);                 // the skip connection
         reluForward(buf.out.data(), size, pool);
         in = buf.out.data();
@@ -233,21 +244,21 @@ std::vector<ParamView> Trunk::params(const std::string& prefix) {
     return out;
 }
 
-std::vector<BufferView> Trunk::buffers(const std::string& prefix) {
+std::vector<BufferView> Trunk::buffers(const std::string& prefix, int firstK) {
     std::vector<BufferView> out;
-    bnBuffers(out, prefix + ".stem.bn", stemBn);
+    bnBuffers(out, prefix + ".stem.bn", stemBn, firstK);
     for (size_t i = 0; i < blocks.size(); ++i) {
         const std::string p = prefix + ".block" + std::to_string(i);
-        bnBuffers(out, p + ".bn1", blocks[i].bn1);
-        bnBuffers(out, p + ".bn2", blocks[i].bn2);
+        bnBuffers(out, p + ".bn1", blocks[i].bn1, firstK);
+        bnBuffers(out, p + ".bn2", blocks[i].bn2, firstK);
     }
     return out;
 }
 
 // ---------------------------------------------------------------- value head
 
-ValueHead::ValueHead(int filters, int area, int hidden)
-    : conv(filters, 1, 1), bn(1), fc1(area, hidden), fc2(hidden, 1) {}
+ValueHead::ValueHead(int filters, int area, int hidden, int statSets)
+    : conv(filters, 1, 1), bn(1, statSets), fc1(area, hidden), fc2(hidden, 1) {}
 
 void ValueHead::init(Rng& rng) {
     conv.init(rng);
@@ -269,13 +280,13 @@ ValueHeadCache::ValueHeadCache(int hiddenSize, int maxBatch, int area) {
 }
 
 void ValueHead::forward(const Backend& be, const float* x, int B, int n, ValueHeadCache& c, BnMode mode,
-                        ThreadPool* pool) {
+                        ThreadPool* pool, BnSets sets) {
     const int M = B * n * n;
     // conv1x1 (F -> 1) -> BN -> ReLU -> Linear(A -> V) -> ReLU -> Linear(V -> 1) -> tanh.
     // A 1x1 conv needs no im2col; its output is written straight into act
     // and normalized in place (forwardTrain reads x before writing y).
     conv.forward(be, x, B, n, nullptr, c.act.data(), pool);
-    bnForward(bn, c.act.data(), M, c.act.data(), c.xhat.data(), c.invStd.data(), mode, pool);
+    bnForward(bn, c.act.data(), B, n * n, c.act.data(), c.xhat.data(), c.invStd.data(), mode, pool, sets);
     reluForward(c.act.data(), M, pool);
     // With a single channel, [1][B][A] already is [B][A]: one row per sample.
     fc1.forward(be, c.act.data(), B, c.hidden.data());
@@ -305,17 +316,17 @@ std::vector<ParamView> ValueHead::params(const std::string& prefix) {
     return out;
 }
 
-std::vector<BufferView> ValueHead::buffers(const std::string& prefix) {
+std::vector<BufferView> ValueHead::buffers(const std::string& prefix, int firstK) {
     std::vector<BufferView> out;
-    bnBuffers(out, prefix + ".bn", bn);
+    bnBuffers(out, prefix + ".bn", bn, firstK);
     return out;
 }
 
 // ---------------------------------------------------------------- prediction heads
 
-PredictionHeads::PredictionHeads(int filters_, int n, int valueHidden)
-    : filters(filters_), area(n * n), actions(n * n + 1), policyConv(filters_, 2, 1), policyBn(2),
-      policyFc(2 * n * n, n * n + 1), value(filters_, n * n, valueHidden) {}
+PredictionHeads::PredictionHeads(int filters_, int n, int valueHidden, int statSets)
+    : filters(filters_), area(n * n), actions(n * n + 1), policyConv(filters_, 2, 1), policyBn(2, statSets),
+      policyFc(2 * n * n, n * n + 1), value(filters_, n * n, valueHidden, statSets) {}
 
 void PredictionHeads::init(Rng& rng) {
     policyConv.init(rng);
@@ -336,12 +347,12 @@ HeadCache::HeadCache(int valueHidden, int maxBatch, int n, Scratch& s)
 }
 
 void PredictionHeads::forward(const Backend& be, const float* x, int B, int n, HeadCache& c, BnMode mode,
-                              ThreadPool* pool) {
+                              ThreadPool* pool, BnSets sets) {
     const int A = area, M = B * A;
     // Policy: conv1x1 (F -> 2) -> BN -> ReLU -> per-sample flatten -> Linear.
     policyConv.forward(be, x, B, n, nullptr, c.policyAct.data(), pool);
-    bnForward(policyBn, c.policyAct.data(), M, c.policyAct.data(), c.policyXhat.data(), c.policyInvStd.data(),
-              mode, pool);
+    bnForward(policyBn, c.policyAct.data(), B, A, c.policyAct.data(), c.policyXhat.data(), c.policyInvStd.data(),
+              mode, pool, sets);
     reluForward(c.policyAct.data(), 2 * static_cast<size_t>(M), pool);
     // [2][B][A] -> [B][2A], feature index ch * A + p.
     parallelRanges(pool, static_cast<size_t>(B), kSampleChunk, [&](size_t b0, size_t b1) {
@@ -353,7 +364,7 @@ void PredictionHeads::forward(const Backend& be, const float* x, int B, int n, H
     });
     policyFc.forward(be, c.policyFlat.data(), B, c.logits.data());
 
-    value.forward(be, x, B, n, c.value, mode, pool);
+    value.forward(be, x, B, n, c.value, mode, pool, sets);
 }
 
 void PredictionHeads::backward(const Backend& be, const float* x, const float* dLogits, const float* dValues,
@@ -388,10 +399,10 @@ std::vector<ParamView> PredictionHeads::params(const std::string& prefix) {
     return out;
 }
 
-std::vector<BufferView> PredictionHeads::buffers(const std::string& prefix) {
+std::vector<BufferView> PredictionHeads::buffers(const std::string& prefix, int firstK) {
     std::vector<BufferView> out;
-    bnBuffers(out, prefix + ".policy.bn", policyBn);
-    for (BufferView& b : value.buffers(prefix + ".value")) out.push_back(b);
+    bnBuffers(out, prefix + ".policy.bn", policyBn, firstK);
+    for (BufferView& b : value.buffers(prefix + ".value", firstK)) out.push_back(b);
     return out;
 }
 

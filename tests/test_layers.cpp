@@ -210,6 +210,46 @@ static void test_batchnorm_momentum_one_sets_running_stats() {
     assert(near(y[0], (1.0 - 2.5) / std::sqrt(1.25 + BatchNorm2d::kEps)));
 }
 
+// Several sets of running statistics: training touches only the set it is
+// given, inference reads only the set it is given, and the per-sample
+// variant gives each sample exactly the bits of forwardInfer with its set.
+static void test_batchnorm_stat_sets() {
+    BatchNorm2d bn(2, 3);
+    assert(bn.runMean.size() == 6u && bn.runVar.size() == 6u);
+    bn.gamma = {1.5f, 0.7f};
+    bn.beta = {0.2f, -0.4f};
+    const int M = 4;
+    const float x[8] = {1, 2, 3, 4, 0, 0, 0, 4};
+    float y[8], xhat[8], invStd[2];
+    bn.forwardTrain(x, M, y, xhat, invStd, true, nullptr, 1.0f, 2);
+    for (int s = 0; s < 2; ++s)
+        for (int ch = 0; ch < 2; ++ch) assert(bn.runMean[s * 2 + ch] == 0.0f && bn.runVar[s * 2 + ch] == 1.0f);
+    assert(bn.runMean[4] == 2.5f && bn.runMean[5] == 1.0f);
+    bn.runMean[2] = -1.0f;                   // set 1 differs from both others
+    bn.runVar[3] = 9.0f;
+
+    // Two samples of A = 2 values per channel: x [2][2][2].
+    const int B = 2, A = 2;
+    float rows[8], one[8];
+    for (int s0 = 0; s0 < 3; ++s0) {
+        for (int s1 = 0; s1 < 3; ++s1) {
+            const int sets[2] = {s0, s1};
+            bn.forwardInferRows(x, B, A, sets, rows);
+            for (int b = 0; b < B; ++b) {
+                bn.forwardInfer(x, B * A, one, nullptr, sets[b]);
+                for (int ch = 0; ch < 2; ++ch)
+                    for (int i = 0; i < A; ++i) {
+                        const int j = (ch * B + b) * A + i;
+                        assert(rows[j] == one[j]);
+                    }
+            }
+        }
+    }
+    bn.forwardInfer(x, M, one, nullptr, 2);  // set 2 holds the batch's own statistics
+    assert(near(one[0], 1.5 * (1.0 - 2.5) / std::sqrt(5.0 / 3.0 + BatchNorm2d::kEps) + 0.2));
+    std::printf("test_batchnorm_stat_sets passed\n");
+}
+
 static void test_he_init_scale() {
     Rng rng(1);
     Conv2d conv(64, 64, 3);                 // w is 64 x 576, fan-in 576
@@ -284,6 +324,7 @@ int main() {
     test_batchnorm_inference_hand_values();
     test_batchnorm_running_stats_update();
     test_batchnorm_momentum_one_sets_running_stats();
+    test_batchnorm_stat_sets();
     test_he_init_scale();
     test_gradients_accumulate();
     std::printf("test_layers: all tests passed\n");
