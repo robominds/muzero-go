@@ -49,11 +49,15 @@ expect analyze "principal variation" "$TMP/analyze.txt"
 
 echo "== gtp session"
 printf 'protocol_version\nboardsize 5\ngenmove b\nplay w C3\nfinal_score\nquit\n' \
-    | "$BUILD/mzgo_gtp" --checkpoint "$CKPT" --simulations 8 >"$TMP/gtp.txt" 2>&1 \
-    || { cat "$TMP/gtp.txt" >&2; fail "gtp"; }
-[ "$(grep -c '^=' "$TMP/gtp.txt")" -eq 6 ] || { cat "$TMP/gtp.txt" >&2; fail "gtp: expected 6 '=' responses"; }
-expect gtp "^= 2" "$TMP/gtp.txt"
-! grep -q '^?' "$TMP/gtp.txt" || { cat "$TMP/gtp.txt" >&2; fail "gtp: error response"; }
+    | "$BUILD/mzgo_gtp" --checkpoint "$CKPT" --simulations 8 >"$TMP/gtp.txt" 2>"$TMP/gtp.err" \
+    || { cat "$TMP/gtp.txt" "$TMP/gtp.err" >&2; fail "gtp"; }
+# Only stdout carries GTP responses; stderr is the engine's log.
+gtp_fail() { cat "$TMP/gtp.txt" >&2; echo "--- stderr" >&2; cat "$TMP/gtp.err" >&2; fail "$1"; }
+[ "$(grep -c '^=' "$TMP/gtp.txt")" -eq 6 ] || gtp_fail "gtp: expected 6 '=' responses"
+! grep -q '^?' "$TMP/gtp.txt" || gtp_fail "gtp: error response"
+grep -q '^= 2$' "$TMP/gtp.txt" || gtp_fail "gtp: protocol_version should answer '= 2'"
+grep -Eq '^= ([A-HJ-T][1-5]|pass|PASS)$' "$TMP/gtp.txt" || gtp_fail "gtp: genmove b should answer a vertex or pass"
+grep -Eq '^= ([BW]\+[0-9.]+|0)$' "$TMP/gtp.txt" || gtp_fail "gtp: final_score should answer a score"
 
 echo "== gtp_match.py: 2 games"
 ENGINE="$BUILD/mzgo_gtp --checkpoint $CKPT --simulations 8"
@@ -68,5 +72,8 @@ echo "== mzgo_match: random vs rollout:8"
     >"$TMP/match.txt" 2>&1 || { cat "$TMP/match.txt" >&2; fail "match"; }
 
 expect match "wins" "$TMP/match.txt"
+# "A random: X wins / B rollout:8: Y wins / Z draws, ..." -- X + Y + Z must be the 2 games played.
+total=$(sed -n 's/^A .*: \([0-9]*\) wins \/ B .*: \([0-9]*\) wins \/ \([0-9]*\) draws.*/\1 \2 \3/p' "$TMP/match.txt" | awk '{print $1+$2+$3}')
+[ "${total:-}" = 2 ] || { cat "$TMP/match.txt" >&2; fail "match: wins + draws should sum to 2"; }
 
 echo "PASS: integration_smoke"
