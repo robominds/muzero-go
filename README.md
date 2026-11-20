@@ -118,7 +118,7 @@ the real rules) and the random bot. A run directory holds:
 |---|---|
 | `config.cfg` | the resolved config, every key |
 | `log.csv` | one row per generation: self-play seconds, mean game length, `capped_games` (stopped by the 2n² move cap; their targets are truncated, not ended), search `mean_depth` / `max_depth`, `past_end_fraction` (simulations whose imagined path goes on beyond two passes in a row), lr, the loss per unroll step (`policy_k0..K`, `value_k0..K`, `reward_k1..K`), the arena scores, the replay window's size |
-| `checkpoints/gen_GGGG.mzn` | the network after generation G (`gen_0000` is the starting one); format version 2, with batch norm statistics per unroll step |
+| `checkpoints/gen_GGGG.mzn` | the network after generation G (`gen_0000` is the starting one); format version 3, with batch norm statistics per unroll step and the pass plane flag (version 2 files still load) |
 | `sgf/gen_GGGG_I.sgf` | the first `sgf_per_generation` self-play games of each generation |
 | `state.bin` | what a resume needs: generation, step, network, optimizer velocity, replay window |
 
