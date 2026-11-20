@@ -107,6 +107,14 @@ feature maps (spatial, as in the paper, so actions can be planes).
   white-to-move plane (2·8 + 2 = 18 planes). Paper: "In Go ... we encode
   the last 8 board states as in AlphaZero". Stem conv + BN + ReLU, then
   `repr_blocks` residual blocks, then hidden-state normalization.
+  *Optional deviation (`pass_plane`, off by default, so the paper's input
+  stays the default and old checkpoints keep working):* one extra input
+  plane at index 2H + 2, all ones iff the move that led to the position was
+  a pass (as in KataGo). In the AlphaZero encoding a pass shows only as two
+  identical history boards, and measurements showed the network cannot learn
+  from that that a pass right after the opponent's pass ends the game. The
+  plane is symmetry invariant and is part of the architecture (the input
+  has 2H + 3 planes).
 - **Dynamics g(sᵏ⁻¹, aᵏ) → sᵏ (, rᵏ).** Input: hidden state concatenated
   with one action plane. Paper: "a normal action ... is encoded as an all
   zero plane, with a single one in the position of the played stone. A pass

@@ -22,7 +22,7 @@ const char* const kUsage =
     "A new run needs an empty or missing DIR; it saves FILE plus the overrides\n"
     "as DIR/config.cfg. --resume continues DIR from its state.bin; overrides may\n"
     "change any key but the architecture keys (board_size, history, repr_blocks,\n"
-    "dyn_blocks, filters, value_hidden, reward_head, unroll_steps). Training stops at the\n"
+    "dyn_blocks, filters, value_hidden, reward_head, pass_plane, unroll_steps). Training stops at the\n"
     "config's `generations`, e.g. --set generations=80 to go on.\n";
 
 int usageError(const std::string& message) {
