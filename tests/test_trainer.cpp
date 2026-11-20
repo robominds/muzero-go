@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -169,6 +170,13 @@ static void test_resume_refuses_arch_change() {
     } catch (const std::invalid_argument& e) {
         assert(contains(e.what(), "filters"));
     }
+    // unroll_steps fixes log.csv's columns, so it cannot change either.
+    try {
+        Trainer::resume(dir, {"unroll_steps=3"});
+        assert(false && "expected std::invalid_argument");
+    } catch (const std::invalid_argument& e) {
+        assert(contains(e.what(), "unroll_steps"));
+    }
     // Restating an architecture key's value is no change; tunable keys may change.
     Trainer ok = Trainer::resume(dir, {"filters=8", "simulations=4"});
     assert(ok.config().simulations == 4);
@@ -217,6 +225,7 @@ static void test_nan_loss_stops() {
     RunConfig c = tinyConfig();
     c.lrInit = 1e30f;
     Trainer t = Trainer::startNew(c, dir);
+    const std::string state = readFile(dir + "/state.bin");
     try {
         t.runGeneration();
         assert(false && "expected std::runtime_error");
@@ -224,8 +233,34 @@ static void test_nan_loss_stops() {
         assert(contains(e.what(), "non-finite loss at generation 1 step"));
     }
     assert(!fs::exists(checkpointPath(dir, 1)));
+    assert(readFile(dir + "/state.bin") == state);
     assert(lines(readFile(dir + "/log.csv")).size() == 1);
     std::printf("test_nan_loss_stops passed\n");
+}
+
+// The last step's update is checked too: one step leaves a finite loss
+// (computed before the update) but infinite weights, which must not reach
+// the checkpoint or state.bin. The learning rate alone is not enough (every
+// |velocity| can stay below 1, keeping lr * v finite even at float's
+// maximum), so a large weight decay makes v ~ 1000 * w and the update overflows.
+static void test_nan_weights_stop() {
+    const std::string dir = freshDir("nanweights");
+    RunConfig c = tinyConfig();
+    c.trainSteps = 1;
+    c.lrInit = std::numeric_limits<float>::max();
+    c.weightDecay = 1000.0f;
+    Trainer t = Trainer::startNew(c, dir);
+    const std::string state = readFile(dir + "/state.bin");
+    try {
+        t.runGeneration();
+        assert(false && "expected std::runtime_error");
+    } catch (const std::runtime_error& e) {
+        assert(contains(e.what(), "non-finite weights at generation 1 step 1"));
+    }
+    assert(!fs::exists(checkpointPath(dir, 1)));
+    assert(readFile(dir + "/state.bin") == state);
+    assert(lines(readFile(dir + "/log.csv")).size() == 1);
+    std::printf("test_nan_weights_stop passed\n");
 }
 
 // bn_calibrate replaces generation 0's initial running statistics (mean 0,
@@ -262,6 +297,7 @@ int main() {
     test_corrupt_state();
     test_refusals();
     test_nan_loss_stops();
+    test_nan_weights_stop();
     test_bn_calibrate();
     fs::remove_all(kRoot);
     return 0;

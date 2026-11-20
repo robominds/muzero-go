@@ -176,6 +176,11 @@ Trainer Trainer::resume(const std::string& runDir, const std::vector<std::string
             throw std::invalid_argument(key + ": an architecture key cannot change on resume (the run has " +
                                         valueOf(saved, key) + ", the override says " + valueOf(cfg, key) + ")");
     }
+    // Not an architecture key, but log.csv's header (written once, by
+    // startNew) has one column per unroll step, so every row must keep K.
+    if (cfg.unrollSteps != saved.unrollSteps)
+        throw std::invalid_argument("unroll_steps: cannot change on resume (log.csv has columns for " +
+                                    std::to_string(saved.unrollSteps) + " unroll steps)");
     validate(cfg);
 
     // Everything is read before the Trainer is built, so any error below is
@@ -345,6 +350,19 @@ void Trainer::runGeneration() {
         }
     }
     const double secondsTrain = secondsSince(trainStart);
+    // Each loss above was computed before its step's update, so the last
+    // update is still unchecked: a blow-up there must not reach the
+    // checkpoint or state.bin, from which there would be no way back.
+    if (cfg_.trainSteps > 0) {
+        bool finite = true;
+        for (const ParamView& p : params)
+            finite = finite && std::all_of(p.value, p.value + p.size, [](float v) { return std::isfinite(v); });
+        for (const BufferView& b : net_->buffers())
+            finite = finite && std::all_of(b.value, b.value + b.size, [](float v) { return std::isfinite(v); });
+        if (!finite)
+            throw std::runtime_error("non-finite weights at generation " + std::to_string(g) + " step " +
+                                     std::to_string(cfg_.trainSteps));
+    }
 
     // 4. Checkpoint, then state.bin: from here on the generation is done
     // and a resume continues with g + 1. A crash after this point (in the

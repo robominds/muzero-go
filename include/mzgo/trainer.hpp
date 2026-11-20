@@ -65,7 +65,8 @@ public:
     static Trainer startNew(const RunConfig& cfg, const std::string& runDir);
     // Resume: reads config.cfg and state.bin and rewrites config.cfg with the
     // overrides applied. Overrides may change only non-architecture keys
-    // (restating an architecture key's value is allowed), else
+    // (restating an architecture key's value is allowed), and not
+    // unroll_steps (log.csv's columns depend on it), else
     // std::invalid_argument naming the key. A missing or corrupt state.bin is
     // a std::runtime_error naming the file.
     static Trainer resume(const std::string& runDir, const std::vector<std::string>& overrides);
@@ -82,8 +83,11 @@ public:
 
     // One generation: self-play, replay add, train_steps steps, checkpoint,
     // state.bin, SGF files, arena, log row. A non-finite loss throws
-    // std::runtime_error("non-finite loss at generation g step s") before
-    // anything of the generation is written.
+    // std::runtime_error("non-finite loss at generation g step s"), and a
+    // non-finite weight or batch norm statistic after the last step throws
+    // std::runtime_error("non-finite weights at generation g step s"), both
+    // before anything of the generation is written. After either, the
+    // Trainer is partly advanced in memory and should be discarded.
     void runGeneration();
     void run();                                          // until generation() == cfg.generations
 
