@@ -25,6 +25,7 @@
 // can run one simulation in each of many games and evaluate all their leaves
 // in one batched model call; runSearch is the plain one-game loop.
 #pragma once
+#include <utility>
 #include <vector>
 #include "mzgo/game.hpp"
 #include "mzgo/model.hpp"
@@ -93,6 +94,12 @@ public:
     SearchResult result() const;
     int selectMove(const SearchResult&, bool sample, Rng& rng) const;  // sample ∝ visits, else argmax (ties: lowest index)
     std::vector<RootEdge> rootEdges() const;   // ascending action order
+    // The principal variation, read from the tree: from the root, repeatedly
+    // the most visited child (ties: lowest action), up to maxLen plies, while
+    // that child has visits. Each entry is (action, that child's mean value
+    // from its own side to move): the line the search believes in, entirely
+    // in imagined space below the root.
+    std::vector<std::pair<int, float>> principalVariation(int maxLen) const;
 
 private:
     struct Node {

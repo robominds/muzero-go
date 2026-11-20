@@ -204,6 +204,21 @@ std::vector<RootEdge> Search::rootEdges() const {
     return edges;
 }
 
+std::vector<std::pair<int, float>> Search::principalVariation(int maxLen) const {
+    std::vector<std::pair<int, float>> pv;
+    if (nodes_.empty()) return pv;
+    const Node* node = &nodes_[0];
+    while (static_cast<int>(pv.size()) < maxLen && node->firstChild >= 0) {
+        const Node* best = nullptr;
+        for (int i = node->firstChild; i < node->firstChild + node->numChildren; ++i)
+            if (!best || nodes_[i].visits > best->visits) best = &nodes_[i];
+        if (best->visits == 0) break;
+        pv.emplace_back(best->action, mean(*best));
+        node = best;
+    }
+    return pv;
+}
+
 SearchResult runSearch(Search& search, ModelSession& session, const Game& game, int history, Rng& rng) {
     assert(!game.isTerminal());
     const int n = game.size();
