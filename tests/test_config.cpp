@@ -78,6 +78,28 @@ static void test_errors() {
     expectThrowsNaming("noise_fraction", "noise_fraction=1.5", true);
     expectThrowsNaming("lr_init", "lr_init=0", true);
     expectThrowsNaming("unroll_steps", "unroll_steps=0", true);
+    // Ranges the trainer relies on.
+    expectThrowsNaming("lr_decay_steps", "lr_decay_steps=0", true);
+    expectThrowsNaming("train_steps", "train_steps=-1", true);
+    expectThrowsNaming("workers", "workers=-1", true);
+    expectThrowsNaming("train_threads", "train_threads=-1", true);
+    expectThrowsNaming("arena_games", "arena_games=-2", true);
+    expectThrowsNaming("arena_games", "arena_games=3", true);
+    expectThrowsNaming("arena_every", "arena_every=-1", true);
+    expectThrowsNaming("arena_gap", "arena_gap=0", true);
+    expectThrowsNaming("arena_temperature_moves", "arena_temperature_moves=-1", true);
+    expectThrowsNaming("rollout_bot_simulations", "rollout_bot_simulations=0", true);
+    expectThrowsNaming("temperature_moves", "temperature_moves=-1", true);
+    expectThrowsNaming("selfplay_group", "selfplay_group=0", true);
+    expectThrowsNaming("max_moves", "max_moves=-1", true);
+    expectThrowsNaming("sgf_per_generation", "sgf_per_generation=-1", true);
+    // Their boundary values are accepted.
+    RunConfig edge;
+    for (const char* kv : {"train_steps=0", "workers=0", "train_threads=0", "arena_games=0", "arena_every=0",
+                           "temperature_moves=0", "max_moves=0", "lr_decay_steps=1", "selfplay_group=1",
+                           "arena_gap=1", "sgf_per_generation=0"})
+        applyOverride(edge, kv);
+    validate(edge);
     std::printf("test_errors passed\n");
 }
 

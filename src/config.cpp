@@ -206,6 +206,21 @@ void validate(const RunConfig& c) {
     if (c.generations < 1) bad("generations", "must be >= 1");
     if (!(c.lrInit > 0)) bad("lr_init", "must be > 0");
     if (!(c.noiseFraction >= 0 && c.noiseFraction <= 1)) bad("noise_fraction", "must be in 0..1");
+    // Ranges the trainer relies on.
+    if (c.lrDecaySteps < 1) bad("lr_decay_steps", "must be >= 1");
+    if (c.trainSteps < 0) bad("train_steps", "must be >= 0");
+    if (c.workers < 0) bad("workers", "must be >= 0 (0 = all cores)");
+    if (c.trainThreads < 0) bad("train_threads", "must be >= 0 (0 = all cores)");
+    if (c.arenaGames < 0 || c.arenaGames % 2 != 0)
+        bad("arena_games", "must be even and >= 0 (each side plays Black in half the games)");
+    if (c.arenaEvery < 0) bad("arena_every", "must be >= 0 (0 = no arena)");
+    if (c.arenaGap < 1) bad("arena_gap", "must be >= 1");
+    if (c.arenaTemperatureMoves < 0) bad("arena_temperature_moves", "must be >= 0");
+    if (c.rolloutBotSimulations < 1) bad("rollout_bot_simulations", "must be >= 1");
+    if (c.temperatureMoves < 0) bad("temperature_moves", "must be >= 0");
+    if (c.selfplayGroup < 1) bad("selfplay_group", "must be >= 1");
+    if (c.maxMoves < 0) bad("max_moves", "must be >= 0 (0 = 2 * n * n)");
+    if (c.sgfPerGeneration < 0) bad("sgf_per_generation", "must be >= 0");
 }
 
 }  // namespace mzgo
