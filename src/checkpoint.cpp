@@ -59,9 +59,7 @@ NetConfig readHeader(BinaryReader& r) {
 
 } // namespace
 
-void saveNetwork(const MuZeroNetwork& net, const std::string& path) {
-    std::ostringstream buffer(std::ios::binary);
-    BinaryWriter w(buffer);
+void writeNetwork(BinaryWriter& w, const MuZeroNetwork& net) {
     const NetConfig& cfg = net.config();
     w.u32(kMagic);
     w.u32(kVersion);
@@ -76,13 +74,9 @@ void saveNetwork(const MuZeroNetwork& net, const std::string& path) {
         w.u64(t.size);
         w.floats(t.data, t.size);
     }
-    writeFileAtomically(path, buffer.str());
 }
 
-MuZeroNetwork loadNetwork(const std::string& path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) throw std::runtime_error("cannot open checkpoint " + path);
-    BinaryReader r(in);
+MuZeroNetwork readNetwork(BinaryReader& r, const std::string& source) {
     try {
         MuZeroNetwork net(readHeader(r), 0);   // the seed is irrelevant: every tensor is overwritten
         const std::vector<Tensor> tensors = tensorsOf(net);
@@ -101,14 +95,30 @@ MuZeroNetwork loadNetwork(const std::string& path) {
                                   std::to_string(tensors[i].size));
             r.floats(tensors[i].data, tensors[i].size);
         }
-        if (in.peek() != std::char_traits<char>::eof()) throw FormatError("unexpected data after the last tensor");
         return net;
     } catch (const FormatError& e) {
-        throw std::runtime_error(path + ": " + e.what());
+        throw std::runtime_error(source + ": " + e.what());
     } catch (const std::runtime_error&) {
-        // BinaryReader's own error: the file ended early.
-        throw std::runtime_error(path + ": truncated");
+        // BinaryReader's own error: the data ended early.
+        throw std::runtime_error(source + ": truncated");
     }
+}
+
+void saveNetwork(const MuZeroNetwork& net, const std::string& path) {
+    std::ostringstream buffer(std::ios::binary);
+    BinaryWriter w(buffer);
+    writeNetwork(w, net);
+    writeFileAtomically(path, buffer.str());
+}
+
+MuZeroNetwork loadNetwork(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) throw std::runtime_error("cannot open checkpoint " + path);
+    BinaryReader r(in);
+    MuZeroNetwork net = readNetwork(r, path);
+    if (in.peek() != std::char_traits<char>::eof())
+        throw std::runtime_error(path + ": unexpected data after the last tensor");
+    return net;
 }
 
 } // namespace mzgo

@@ -6,6 +6,7 @@
 #pragma once
 #include <string>
 #include "mzgo/network.hpp"
+#include "mzgo/serialize.hpp"
 
 namespace mzgo {
 
@@ -18,5 +19,11 @@ void saveNetwork(const MuZeroNetwork& net, const std::string& path);
 // Throws std::runtime_error naming path on a missing file, bad magic,
 // version, shape, tensor name or size, truncation or trailing data.
 MuZeroNetwork loadNetwork(const std::string& path);
+
+// The same format inside a larger file (the trainer's state.bin). readNetwork
+// throws std::runtime_error naming `source` on bad contents or truncation; it
+// stops after the last tensor (checking for trailing data is the caller's job).
+void writeNetwork(BinaryWriter& w, const MuZeroNetwork& net);
+MuZeroNetwork readNetwork(BinaryReader& r, const std::string& source);
 
 } // namespace mzgo
