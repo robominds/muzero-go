@@ -184,7 +184,7 @@ static void test_analyze_runs() {
     Search search(cfg, model.dims());
     auto session = model.newSession(1);
     Rng rng(1);
-    runSearch(search, *session, game, model.history(), rng);
+    runSearch(search, *session, game, model.history(), model.passPlane(), rng);
     const std::vector<PvStep> pv = search.principalVariation(8);
     assert(!pv.empty() && pv.size() <= 8);
     int best = -1, bestVisits = -1;

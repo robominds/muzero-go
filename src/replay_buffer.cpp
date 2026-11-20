@@ -30,12 +30,12 @@ void ReplayBuffer::add(GameRecord g) {
     rebuildPrefix();
 }
 
-void ReplayBuffer::sampleBatch(int B, int K, int history, bool augment, Rng& rng,
+void ReplayBuffer::sampleBatch(int B, int K, int history, bool passPlane, bool augment, Rng& rng,
                                TrainBatch& out) const {
     const long total = positions();
     assert(total > 0 && total <= std::numeric_limits<int>::max());
     const GameRecord& first = games_.front();
-    out.resize(B, K, numPlanes(history), first.area(), first.numActions());
+    out.resize(B, K, numPlanes(history, passPlane), first.area(), first.numActions());
     for (int b = 0; b < B; ++b) {
         const long pick = rng.below(static_cast<int>(total));
         // First game whose cumulative count exceeds pick.
@@ -44,7 +44,7 @@ void ReplayBuffer::sampleBatch(int B, int K, int history, bool augment, Rng& rng
         const long before = gi == 0 ? 0 : prefix_[gi - 1];
         const int t = static_cast<int>(pick - before);
         const int sym = augment ? rng.below(kNumSymmetries) : 0;
-        fillSample(games_[gi], t, K, history, sym, rng, out, b);
+        fillSample(games_[gi], t, K, history, passPlane, sym, rng, out, b);
     }
 }
 

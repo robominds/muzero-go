@@ -33,7 +33,8 @@ void playGroup(const Model& model, const SelfPlayConfig& cfg, uint64_t seed, int
                ModelSession& session, std::vector<GameRecord>& records, std::vector<GameStats>& stats) {
     const ModelDims dims = model.dims();
     const int history = model.history();
-    const int obsSize = numPlanes(history) * dims.area(), hs = dims.hiddenSize();
+    const bool passPlane = model.passPlane();
+    const int obsSize = numPlanes(history, passPlane) * dims.area(), hs = dims.hiddenSize();
 
     std::vector<std::unique_ptr<LiveGame>> live;
     for (int i = begin; i < end; ++i)
@@ -52,7 +53,7 @@ void playGroup(const Model& model, const SelfPlayConfig& cfg, uint64_t seed, int
         if (!batch.empty()) {
             obs.resize(batch.size() * static_cast<size_t>(obsSize));
             for (size_t b = 0; b < batch.size(); ++b)
-                encodeGame(live[batch[b]]->game, history, 0, obs.data() + b * obsSize);
+                encodeGame(live[batch[b]]->game, history, 0, obs.data() + b * obsSize, passPlane);
             session.initialInference(obs.data(), static_cast<int>(batch.size()), out);
             for (size_t b = 0; b < batch.size(); ++b) {
                 LiveGame& g = *live[batch[b]];
@@ -156,7 +157,7 @@ MuZeroPlayer::MuZeroPlayer(const Model& model, const MctsConfig& cfg, int temper
       search_([&] { MctsConfig c = cfg; c.addNoise = false; return c; }(), model.dims()) {}
 
 int MuZeroPlayer::selectMove(const Game& game, Rng& rng) {
-    last_ = runSearch(search_, *session_, game, model_.history(), rng);
+    last_ = runSearch(search_, *session_, game, model_.history(), model_.passPlane(), rng);
     return search_.selectMove(last_, game.moveCount() < temperatureMoves_, rng);
 }
 

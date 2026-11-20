@@ -118,14 +118,14 @@ the real rules) and the random bot. A run directory holds:
 |---|---|
 | `config.cfg` | the resolved config, every key |
 | `log.csv` | one row per generation: self-play seconds, mean game length, `capped_games` (stopped by the 2n² move cap; their targets are truncated, not ended), search `mean_depth` / `max_depth`, `past_end_fraction` (simulations whose imagined path goes on beyond two passes in a row), lr, the loss per unroll step (`policy_k0..K`, `value_k0..K`, `reward_k1..K`), the arena scores, the replay window's size |
-| `checkpoints/gen_GGGG.mzn` | the network after generation G (`gen_0000` is the starting one); format version 2, with batch norm statistics per unroll step |
+| `checkpoints/gen_GGGG.mzn` | the network after generation G (`gen_0000` is the starting one); format version 3, with batch norm statistics per unroll step and the pass plane flag (version 2 files still load) |
 | `sgf/gen_GGGG_I.sgf` | the first `sgf_per_generation` self-play games of each generation |
 | `state.bin` | what a resume needs: generation, step, network, optimizer velocity, replay window |
 
 A new run refuses a non-empty directory. `--resume` continues from
 `state.bin`; overrides may change any key except the architecture keys
 (`board_size`, `history`, `repr_blocks`, `dyn_blocks`, `filters`,
-`value_hidden`, `reward_head`, `unroll_steps`: batch norm keeps running
+`value_hidden`, `reward_head`, `pass_plane`, `unroll_steps`: batch norm keeps running
 statistics per unroll step, so K is part of the network). To go on past the
 config's last generation: `--resume DIR --set generations=200`. Every random
 choice is derived from (seed, generation, phase, step), so a resumed run
@@ -140,11 +140,14 @@ key keeps that meaning. `docs/results.md` measures why the presets turn it
 on. Opt-in switches, off by default (the paper's version is the default):
 `bn_calibrate` (set generation 0's batch norm statistics, every unroll
 step's set, from one K-step pass over random-move positions),
-`symmetry_augment` (one random board symmetry per unroll).
+`symmetry_augment` (one random board symmetry per unroll), `pass_plane` (off
+by default (paper input); on adds a plane marking that the last move was a
+pass, so the input has 2·history + 3 planes; an architecture key).
 
 Checkpoints and `state.bin` files written before batch norm kept its
 statistics per unroll step (checkpoint format version 1) cannot be loaded
-or resumed; loading one says the format changed.
+or resumed; loading one says the format changed. Version 2 files (before
+`pass_plane`) still load, with the plane off.
 
 ### `mzgo_match` — two players, N games
 

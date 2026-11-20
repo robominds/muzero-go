@@ -38,6 +38,7 @@ std::vector<Field> fields(RunConfig& c) {
         {"filters", Kind::Int, &c.filters},
         {"value_hidden", Kind::Int, &c.valueHidden},
         {"reward_head", Kind::Bool, &c.rewardHead},
+        {"pass_plane", Kind::Bool, &c.passPlane},
         {"games_per_generation", Kind::Int, &c.gamesPerGeneration},
         {"simulations", Kind::Int, &c.simulations},
         {"selfplay_group", Kind::Int, &c.selfplayGroup},
@@ -188,7 +189,7 @@ std::string configToString(const RunConfig& cfg) {
 
 std::vector<std::string> architectureKeys() {
     return {"board_size", "history", "repr_blocks", "dyn_blocks", "filters", "value_hidden", "reward_head",
-            "unroll_steps"};
+            "pass_plane", "unroll_steps"};
 }
 
 void validate(const RunConfig& c) {

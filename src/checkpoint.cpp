@@ -13,7 +13,9 @@ namespace {
 constexpr uint32_t kMagic = 0x4E475A4D;   // bytes 'M' 'Z' 'G' 'N' when written little-endian
 // Version 2: batch norm running statistics per unroll step (network.hpp),
 // so the header carries unrollSteps and the buffers are named per set.
-constexpr uint32_t kVersion = 2;
+// Version 3: the header ends with the pass plane flag (version 2 files, which
+// lack it, still load, with the plane off).
+constexpr uint32_t kVersion = 3;
 // Shape limits for a header to be believed: they keep a corrupt file from
 // asking for an absurd allocation.
 constexpr int kMaxHistory = 16, kMaxBlocks = 64, kMaxFilters = 1024, kMaxValueHidden = 1024, kMaxUnroll = 64;
@@ -43,7 +45,7 @@ NetConfig readHeader(BinaryReader& r) {
         throw FormatError("checkpoint format version 1 is no longer supported: the format changed to version 2, "
                           "which keeps batch norm statistics per unroll step; networks and runs saved before "
                           "that change cannot be loaded or resumed");
-    if (version != kVersion) throw FormatError("unsupported version " + std::to_string(version));
+    if (version != 2 && version != kVersion) throw FormatError("unsupported version " + std::to_string(version));
     NetConfig cfg;
     cfg.boardSize = r.i32();
     cfg.history = r.i32();
@@ -55,6 +57,11 @@ NetConfig readHeader(BinaryReader& r) {
     if (reward != 0 && reward != 1) throw FormatError("invalid reward head flag in header");
     cfg.rewardHead = reward == 1;
     cfg.unrollSteps = r.i32();
+    if (version >= 3) {
+        const int32_t pass = r.i32();
+        if (pass != 0 && pass != 1) throw FormatError("invalid pass plane flag in header");
+        cfg.passPlane = pass == 1;
+    }
     if (cfg.boardSize < kMinBoardSize || cfg.boardSize > kMaxBoardSize || cfg.history < 1 ||
         cfg.history > kMaxHistory || cfg.reprBlocks < 0 || cfg.reprBlocks > kMaxBlocks || cfg.dynBlocks < 0 ||
         cfg.dynBlocks > kMaxBlocks || cfg.filters < 1 || cfg.filters > kMaxFilters || cfg.valueHidden < 1 ||
@@ -74,6 +81,7 @@ void writeNetwork(BinaryWriter& w, const MuZeroNetwork& net) {
         w.i32(v);
     w.i32(cfg.rewardHead ? 1 : 0);
     w.i32(cfg.unrollSteps);
+    w.i32(cfg.passPlane ? 1 : 0);
     // params() hands out writable views; here they are only read.
     const std::vector<Tensor> tensors = tensorsOf(const_cast<MuZeroNetwork&>(net));
     w.u32(static_cast<uint32_t>(tensors.size()));

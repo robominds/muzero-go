@@ -20,7 +20,7 @@ using namespace mzgo;
 
 namespace {
 
-NetConfig smallConfig(bool rewardHead, int unrollSteps = 3) {
+NetConfig smallConfig(bool rewardHead, int unrollSteps = 3, bool passPlane = false) {
     NetConfig cfg;
     cfg.boardSize = 5;
     cfg.history = 2;
@@ -30,6 +30,7 @@ NetConfig smallConfig(bool rewardHead, int unrollSteps = 3) {
     cfg.valueHidden = 4;
     cfg.rewardHead = rewardHead;
     cfg.unrollSteps = unrollSteps;
+    cfg.passPlane = passPlane;
     return cfg;
 }
 
@@ -531,6 +532,67 @@ static void test_checkpoint_round_trip() {
     std::printf("test_checkpoint_round_trip passed\n");
 }
 
+static void test_pass_plane_network() {
+    const NetConfig cfg = smallConfig(true, 2, true);
+    assert(cfg.planes() == 2 * cfg.history + 3);
+    assert(smallConfig(true, 2, false).planes() == 2 * cfg.history + 2);
+    assert(!(cfg == smallConfig(true, 2, false)));
+    const int B = 3;
+    NaiveBackend be;
+    MuZeroNetwork net(cfg, 91);
+    Rng rng(92);
+    const TrainBatch batch = randomBatch(cfg, B, cfg.unrollSteps, rng);
+    assert(batch.observations.size() == static_cast<size_t>(B) * cfg.planes() * cfg.area());
+    auto ws = net.newInferWorkspace(B, be);
+    ModelOutput out;
+    net.initialInference(*ws, batch.observations.data(), B, out);
+    assert(out.values.size() == static_cast<size_t>(B));
+    TrainWorkspace tws(cfg, B, cfg.unrollSteps, be);
+    const UnrollLoss loss = net.trainStep(tws, batch);
+    assert(std::isfinite(loss.total));
+    for (const ParamView& p : net.params())
+        if (p.name == "repr.stem.conv.w") assert(p.size == static_cast<size_t>(cfg.filters * cfg.planes() * 9));
+    std::printf("test_pass_plane_network passed\n");
+}
+
+// Version 2 had no pass plane field: the header ended after unrollSteps.
+static void test_checkpoint_pass_plane_and_v2() {
+    const std::string path = tempPath("pass_plane.mzn");
+    {   // round trip with the plane on
+        const NetConfig cfg = smallConfig(true, 2, true);
+        MuZeroNetwork net(cfg, 93);
+        saveNetwork(net, path);
+        MuZeroNetwork loaded = loadNetwork(path);
+        assert(loaded.config() == cfg && loaded.config().passPlane);
+        assert(loaded.config().planes() == 2 * cfg.history + 3);
+    }
+    {   // a version 2 file: same bytes as a v3 file minus the pass plane field, version number 2
+        const NetConfig cfg = smallConfig(true, 2, false);
+        MuZeroNetwork net(cfg, 94);
+        saveNetwork(net, path);
+        std::string bytes;
+        {
+            std::ifstream in(path, std::ios::binary);
+            bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        }
+        const size_t flagAt = 8 + 8 * 4;   // magic, version, then eight i32 header fields
+        assert(bytes[flagAt] == 0 && bytes[flagAt + 1] == 0 && bytes[flagAt + 2] == 0 && bytes[flagAt + 3] == 0);
+        bytes.erase(flagAt, 4);
+        bytes[4] = 2;
+        {
+            std::ofstream out(path, std::ios::binary | std::ios::trunc);
+            out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        }
+        MuZeroNetwork loaded = loadNetwork(path);
+        assert(loaded.config() == cfg && !loaded.config().passPlane);
+        std::vector<ParamView> pa = net.params(), pb = loaded.params();
+        assert(pa.size() == pb.size());
+        for (size_t t = 0; t < pa.size(); ++t) assert(std::equal(pa[t].value, pa[t].value + pa[t].size, pb[t].value));
+    }
+    std::filesystem::remove(path);
+    std::printf("test_checkpoint_pass_plane_and_v2 passed\n");
+}
+
 static void test_corrupt_checkpoint() {
     MuZeroNetwork net(smallConfig(false), 81);
     const std::string path = tempPath("corrupt.mzn");
@@ -588,6 +650,8 @@ int main() {
     test_pool_bit_identical();
     test_network_model();
     test_checkpoint_round_trip();
+    test_pass_plane_network();
+    test_checkpoint_pass_plane_and_v2();
     test_corrupt_checkpoint();
     std::printf("test_network: all tests passed\n");
     return 0;

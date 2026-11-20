@@ -24,7 +24,7 @@ public:
     // B samples, each a position chosen uniformly over all stored positions (rng),
     // symmetry uniform in [0,8) when augment, else 0. Per sample the rng is
     // consumed in a fixed order: position, symmetry, then padding actions.
-    void sampleBatch(int B, int K, int history, bool augment, Rng& rng, TrainBatch& out) const;
+    void sampleBatch(int B, int K, int history, bool passPlane, bool augment, Rng& rng, TrainBatch& out) const;
 
     // Format: "MZRB", u32 version 1, u32 capacity, u32 game count, then games.
     void save(BinaryWriter&) const;

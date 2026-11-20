@@ -1258,39 +1258,102 @@ Those are the positions where the values above 1 appear.
 - **Longer training.** 40 generations is about 11 minutes on this machine.
   The learning-rate schedule had reached 0.0045 by then (`lr` column).
 
-## 9×9
+## 9×9: `9x9-s1` (stopped at generation 94)
 
-`runs/9x9-s1` is training on the fixed code and has nothing to report yet.
-It was started as
+`runs/9x9-s1` was the 9×9 preset on the fixed code (komi 7.5, 6 + 6
+blocks × 64 filters, `reward_head = true`, 200 games and 200 simulations
+per generation, 400 training steps of batch 256, K = 5, a replay window of
+2500 games), started as
 
 ```
 ./build/mzgo_train --config configs/9x9.cfg --run runs/9x9-s1 --set workers=6 --set train_threads=6
 ```
 
-and `runs/9x9-s1.log` begins `starting runs/9x9-s1 at generation 0 of 150`,
-followed by the configuration: the 9×9 preset (komi 7.5, 6 + 6 blocks × 64
-filters, `reward_head = true`, 200 games and 200 simulations per
-generation, 400 training steps of batch 256, K = 5, a replay window of 2500
-games, lr 0.02 decaying tenfold over 60,000 steps). Generations so far:
+It was stopped at generation 94 because it never learned to beat the
+random bot: over the last 30 generations it scored 0.05–0.25 against it
+(20 games each), and 0–0.1 against `rollout:200`. The last lines of the log:
 
 ```
-gen 1: selfplay 367.741s (200 games, mean length 120.445), train 202.458s (400 steps, loss 8.94917, lr 0.02), arena vs gen 0 0, rollout 0, random 0
-gen 2: selfplay 226.235s (200 games, mean length 72.865), train 208.175s (400 steps, loss 8.65246, lr 0.0196953), arena vs gen 0 0, rollout 0, random 0
+gen 93: selfplay 250.193s (200 games, mean length 94.735), train 179.197s (400 steps, loss 5.67254, lr 0.00487188), arena vs gen 88 0.4, rollout 0.05, random 0.15
+gen 94: selfplay 214.731s (200 games, mean length 81.69), train 179.849s (400 steps, loss 5.62784, lr 0.00479767), arena vs gen 89 0.9, rollout 0.1, random 0.25
 ```
 
-The checkpoints were written at 23:03:37 (generation 0), 23:13:07 and
-23:21:00 on 2026-11-19, 9.5 and 7.9 minutes apart. The second interval
-includes generation 1's arena, which runs after its checkpoint is written.
-Another long job was sharing the machine. Generation 1's mean game length
-(120.445) is the same as the pre-fix run's, which is expected if both start
-from the same untrained network (seed 1). 150 generations at this pace
-would take about 20–24 hours. That is only a projection; self-play time
-changes with game length.
+### Diagnosis: the network cannot see that the opponent just passed
+
+Self-play had settled into short, pass-heavy games with nearly identical
+openings. The random bot never passes and fills the board, which leads to
+positions self-play never visits. Within self-play, the search often
+failed to play the winning pass that ends the game after the opponent
+passed.
+
+The cause is in the input. The representation function sees AlphaZero's
+planes: 8 history boards × (own, opponent) plus 2 colour planes. A pass
+shows up only as two identical consecutive history boards. A probe that
+starts the model k imagined steps before a real game end (generation 86,
+self-play games) measured:
+
+| k | reward × sign of the outcome | value after the end (should be 0) |
+|---|---|---|
+| 1 | 0.2 of the target | 0.77 |
+| ≥ 2 | about 0.7 of the target | about 0.06 |
+
+At k = 1 the real position is the one right after the opponent's pass, so
+the network has to read "the last move was a pass" from the input. At
+k ≥ 2 the pass happens inside the dynamics function, which knows the
+action. Training agrees: the `reward_k1` loss was 4–8 times the k ≥ 2
+losses. The same pattern was measured on 5×5 (run 4).
+
+The paper's Appendix E describes the same input for Go, with no pass
+feature, so this is not a deviation from the paper. KataGo adds explicit
+"previous move was a pass" features for this reason.
+
+## Run 5: `5x5-k05-pp`, the pass plane
+
+The fix is an optional input plane, `pass_plane = true`: one extra plane
+after the colour planes, all ones if the last move was a pass. It is off by
+default, so the paper's input stays the default and older checkpoints
+still load (checkpoint format version 3; version 2 loads with the plane
+off). Run 5 is run 4's config with only `pass_plane = true` added, same
+seed, 40 generations.
+
+Measured at generation 40 (matches: 200 games, 200 simulations,
+`--temperature-moves 2`, komi 0.5, seed 7):
+
+| | Run 4 (no plane) | Run 5 (pass plane) |
+|---|---|---|
+| Reward at k = 1, fraction of the target | 0.35 | 0.77 |
+| Value after the end at k = 1 | 0.52 | 0.19 |
+| Reward at k = 2, fraction of the target | 0.87 | 0.82 |
+| `reward_k1` loss at generation 33 | 0.019 | 0.005 |
+| Score against the random bot | 0.85 | 0.79 |
+| Score against `rollout:200` | 0.125 | 0.065 |
+
+Head to head, run 5 beat run 4 148–52 (0.74).
+
+The plane fixes the blind spot: the ending one step ahead is now learned
+almost as well as the ending two steps ahead. Run 5 is clearly stronger
+at self-play Go. It is not better against the two bots, which never pass
+and lead to crowded, capture-heavy positions. That gap is about 1.6–2
+standard errors from a single training seed, so it may be noise. If it is
+real, the likely cause is narrow self-play (too little exploration), not
+passes.
+
+## 9×9: `9x9-pp-s1`
+
+`runs/9x9-pp-s1` is the 9×9 preset with only `pass_plane = true` added,
+started on 2026-11-20 as
+
+```
+./build/mzgo_train --config configs/9x9.cfg --run runs/9x9-pp-s1 --set pass_plane=true --set workers=6 --set train_threads=6
+```
+
+Its results will be reported here. If it still loses to the random bot,
+the next experiment is more exploration in self-play.
 
 An earlier 9×9 run, `runs/9x9-rh-s1`, was started on the pre-fix code and
 stopped after 3 generations. Its checkpoints are format version 1 and no
 longer load. The head-to-head against `alphazero-go` will be reported here
-once `runs/9x9-s1` has a checkpoint worth comparing.
+once a 9×9 run has a checkpoint worth comparing.
 
 ## What changed because of these results
 
@@ -1308,6 +1371,8 @@ once `runs/9x9-s1` has a checkpoint worth comparing.
   its last move, the score at the cap as the last position's value target,
   and no targets past it (`90cbaba`). Run 4 is the 5×5 reward-head run
   repeated on that code.
+- The optional `pass_plane` input (run 5) was added because of the 9×9
+  diagnosis. It is off by default; the 9×9 restart turns it on.
 
 ---
 

@@ -25,7 +25,7 @@ struct RunConfig {
     // game
     int boardSize = 5; float komi = 24.5f; int maxMoves = 0;              // 0 -> 2*n*n
     // network (architecture keys)
-    int history = 8, reprBlocks = 3, dynBlocks = 3, filters = 32, valueHidden = 32; bool rewardHead = false;
+    int history = 8, reprBlocks = 3, dynBlocks = 3, filters = 32, valueHidden = 32; bool rewardHead = false, passPlane = false;
     // search / self-play
     int gamesPerGeneration = 200, simulations = 200, selfplayGroup = 8;
     float dirichletScale = 10, noiseFraction = 0.25f; int temperatureMoves = 8;

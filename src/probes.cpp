@@ -43,7 +43,8 @@ void forEachImagined(const Model& model, const std::vector<GameRecord>& games, c
                      const Visit& visit) {
     const ModelDims dims = model.dims();
     const int history = model.history();
-    const size_t obsSize = static_cast<size_t>(numPlanes(history)) * dims.area();
+    const bool passPlane = model.passPlane();
+    const size_t obsSize = static_cast<size_t>(numPlanes(history, passPlane)) * dims.area();
     const size_t hs = static_cast<size_t>(dims.hiddenSize());
     std::unique_ptr<ModelSession> session = model.newSession(kBatch);
     ModelOutput out;
@@ -55,7 +56,7 @@ void forEachImagined(const Model& model, const std::vector<GameRecord>& games, c
         obs.resize(B * obsSize);
         for (int b = 0; b < B; ++b) {
             const Start& s = starts[first + b];
-            encodeRecordPosition(games[s.game], s.t, history, 0, obs.data() + b * obsSize);
+            encodeRecordPosition(games[s.game], s.t, history, 0, obs.data() + b * obsSize, passPlane);
         }
         session->initialInference(obs.data(), B, out);
         active.clear();
@@ -353,7 +354,7 @@ std::string analyzePosition(const Model& model, const Game& game, const MctsConf
     Search search(quiet, model.dims());
     std::unique_ptr<ModelSession> session = model.newSession(1);
     Rng rng(0);
-    const SearchResult result = runSearch(search, *session, game, model.history(), rng);
+    const SearchResult result = runSearch(search, *session, game, model.history(), model.passPlane(), rng);
     const int n = game.size();
     const Color toMove = game.board().toMove();
     const char* side = toMove == Color::Black ? "Black" : "White";

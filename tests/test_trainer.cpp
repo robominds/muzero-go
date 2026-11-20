@@ -74,10 +74,10 @@ static bool contains(const std::string& haystack, const std::string& needle) {
 
 static void test_net_config_from() {
     RunConfig c = tinyConfig();
-    c.history = 4; c.rewardHead = true; c.reprBlocks = 2; c.dynBlocks = 3;
+    c.history = 4; c.rewardHead = true; c.passPlane = true; c.reprBlocks = 2; c.dynBlocks = 3;
     const NetConfig n = netConfigFrom(c);
     assert(n.boardSize == 5 && n.history == 4 && n.reprBlocks == 2 && n.dynBlocks == 3 && n.filters == 8 &&
-           n.valueHidden == 8 && n.rewardHead);
+           n.valueHidden == 8 && n.rewardHead && n.passPlane && n.planes() == 11);
     std::printf("test_net_config_from passed\n");
 }
 
@@ -180,6 +180,12 @@ static void test_resume_refuses_arch_change() {
         assert(false && "expected std::invalid_argument");
     } catch (const std::invalid_argument& e) {
         assert(contains(e.what(), "unroll_steps") && contains(e.what(), "architecture key"));
+    }
+    try {
+        Trainer::resume(dir, {"pass_plane=true"});
+        assert(false && "expected std::invalid_argument");
+    } catch (const std::invalid_argument& e) {
+        assert(contains(e.what(), "pass_plane") && contains(e.what(), "architecture key"));
     }
     // Restating an architecture key's value is no change; tunable keys may change.
     Trainer ok = Trainer::resume(dir, {"filters=8", "simulations=4"});
