@@ -1,3 +1,4 @@
+// Copied from alphazero-go (Mark Castelluccio), adapted for mzgo.
 // The eight symmetries of the square board.
 //
 // Go's rules do not change if the board is rotated or mirrored, so a

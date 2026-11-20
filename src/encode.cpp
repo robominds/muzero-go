@@ -1,3 +1,4 @@
+// Copied from alphazero-go (Mark Castelluccio), adapted for mzgo.
 #include "mzgo/encode.hpp"
 #include <algorithm>
 #include <array>

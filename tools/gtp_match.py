@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Copied from alphazero-go (Mark Castelluccio), adapted for mzgo.
 """Play a match between two GTP engines and rate the result.
 
     python3 tools/gtp_match.py --a "build-blas/gtp --checkpoint gen_0200.azn --backend blas" \\

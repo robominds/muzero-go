@@ -1,3 +1,4 @@
+// Copied from alphazero-go (Mark Castelluccio), adapted for mzgo.
 // The rules of Go for a single position.
 //
 // Stones of one color that touch horizontally or vertically form a group; the

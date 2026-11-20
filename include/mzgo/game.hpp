@@ -1,3 +1,4 @@
+// Copied from alphazero-go (Mark Castelluccio), adapted for mzgo.
 // A game of Go in progress.
 //
 // A single Board knows the local rules, but two rules need the game's past.

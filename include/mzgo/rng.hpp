@@ -1,3 +1,4 @@
+// Copied from alphazero-go (Mark Castelluccio), adapted for mzgo.
 // Deterministic randomness.
 //
 // MuZero is full of randomness: weight initialization, Dirichlet noise at

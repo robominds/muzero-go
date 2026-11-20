@@ -1,3 +1,4 @@
+// Copied from alphazero-go (Mark Castelluccio), adapted for mzgo.
 // The building blocks of the ResNet, each with a hand-written backward pass.
 // Backprop is the chain rule applied layer by layer in reverse: given dL/dy
 // (how the loss changes with a layer's output), a layer produces dL/dx for

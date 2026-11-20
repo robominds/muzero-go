@@ -1,3 +1,4 @@
+// Copied from alphazero-go (Mark Castelluccio), adapted for mzgo.
 // SGF (Smart Game Format) is the text format every Go program and viewer
 // understands. A game is a tree of nodes "(;...;...)"; each node holds
 // properties like B[cd] (Black plays column c, row d, counted from the top

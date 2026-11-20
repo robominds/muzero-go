@@ -1,3 +1,4 @@
+// Copied from alphazero-go (Mark Castelluccio), adapted for mzgo.
 // What the network sees.
 //
 // A position is fed to the network as a stack of n x n binary planes, always

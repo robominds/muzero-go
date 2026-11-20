@@ -1,3 +1,4 @@
+// Copied from alphazero-go (Mark Castelluccio), adapted for mzgo.
 #include "mzgo/layers.hpp"
 #include "mzgo/parallel.hpp"
 #include <algorithm>

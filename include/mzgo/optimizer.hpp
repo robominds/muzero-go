@@ -1,3 +1,4 @@
+// Copied from alphazero-go (Mark Castelluccio), adapted for mzgo.
 // How a model learns from a gradient. Plain SGD steps straight down the
 // current minibatch's gradient, which is noisy; momentum keeps a running
 // "velocity" so consistent directions build up speed while noise cancels.

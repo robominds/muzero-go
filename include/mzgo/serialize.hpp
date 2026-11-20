@@ -1,3 +1,4 @@
+// Copied from alphazero-go (Mark Castelluccio), adapted for mzgo.
 // Binary files that read back identically on any machine. Multi-byte values
 // are written least significant byte first (little-endian) by explicit
 // shifts, never by dumping memory, so the format does not depend on the

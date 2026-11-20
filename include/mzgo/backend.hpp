@@ -1,3 +1,4 @@
+// Copied from alphazero-go (Mark Castelluccio), adapted for mzgo.
 // The numeric core. Almost all of a ResNet's time goes into one operation:
 // general matrix multiply, C = alpha * A * B + beta * C. A convolution
 // becomes a gemm once im2col copies every k x k input patch into a column,

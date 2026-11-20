@@ -1,3 +1,4 @@
+// Copied from alphazero-go (Mark Castelluccio), adapted for mzgo.
 // A tiny work-sharing loop. Self-play and arena games are independent, so
 // W threads simply pull the next game index from a shared atomic counter
 // until none are left. Which thread plays which game varies from run to

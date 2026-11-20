@@ -1,3 +1,4 @@
+// Copied from alphazero-go (Mark Castelluccio), adapted for mzgo.
 // Compiled only when CMake is configured with -DMZ_USE_BLAS=ON.
 #include "mzgo/backend.hpp"
 #include <algorithm>

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Copied from alphazero-go (Mark Castelluccio), adapted for mzgo.
 """Verify the file:line citations in docs/algorithm-explained.{md,html}.
 
 The muzero-go explainer quotes the real C++ -- library sources in src/,
