@@ -1,0 +1,6 @@
+build*/
+runs/
+.DS_Store
+__pycache__/
+Testing/
+.superpowers/
