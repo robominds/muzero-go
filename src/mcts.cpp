@@ -138,12 +138,14 @@ void Search::expandLeaf(const float* hidden, const float* logits, float value, f
     }
 
     // Statistics: leaf depth, and whether the imagined path (after the real
-    // previous move) holds two passes in a row.
+    // previous move) went on beyond two passes in a row: a double pass
+    // completed at a node before the leaf. A leaf that is itself the second
+    // pass is where the real game would end, not past it.
     const int depth = static_cast<int>(path_.size()) - 1;
     maxDepth_ = std::max(maxDepth_, depth);
     depthSum_ += depth;
     bool prevPass = previousMoveWasPass_, pastEnd = false;
-    for (size_t i = 1; i < path_.size(); ++i) {
+    for (size_t i = 1; i + 1 < path_.size(); ++i) {
         const bool isPass = nodes_[path_[i]].action == dims_.area();
         pastEnd = pastEnd || (isPass && prevPass);
         prevPass = isPass;
@@ -205,8 +207,8 @@ std::vector<RootEdge> Search::rootEdges() const {
     return edges;
 }
 
-std::vector<std::pair<int, float>> Search::principalVariation(int maxLen) const {
-    std::vector<std::pair<int, float>> pv;
+std::vector<PvStep> Search::principalVariation(int maxLen) const {
+    std::vector<PvStep> pv;
     if (nodes_.empty()) return pv;
     const Node* node = &nodes_[0];
     while (static_cast<int>(pv.size()) < maxLen && node->firstChild >= 0) {
@@ -214,7 +216,7 @@ std::vector<std::pair<int, float>> Search::principalVariation(int maxLen) const 
         for (int i = node->firstChild; i < node->firstChild + node->numChildren; ++i)
             if (!best || nodes_[i].visits > best->visits) best = &nodes_[i];
         if (best->visits == 0) break;
-        pv.emplace_back(best->action, mean(*best));
+        pv.push_back({best->action, mean(*best), best->reward, edgeQ(*best)});
         node = best;
     }
     return pv;

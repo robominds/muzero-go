@@ -298,15 +298,24 @@ static void test_past_end_fraction() {
     SearchResult r = runSearch(s, *session, afterPass, model.history(), rng);
     assert(r.pastEndFraction > 0.5f);
 
-    // The real previous move counts: one simulation choosing pass is past the
-    // end after a pass, and not at the start of a game.
+    // Only a path that goes on BEYOND a double pass counts; a leaf that is
+    // the double pass is the end itself, which the model may well evaluate.
+    // The real previous move counts. After a pass: sim 1 is root -> pass
+    // (the double pass is the leaf: not counted), sim 2 root -> pass -> pass
+    // (one step beyond it: counted).
     cfg.simulations = 1;
     Search one(cfg, kDims);
     r = runSearch(one, *session, afterPass, model.history(), rng);
-    assert(r.visits[kPass] == 1 && r.pastEndFraction == 1.0f && r.maxDepth == 1);
+    assert(r.visits[kPass] == 1 && r.pastEndFraction == 0.0f && r.maxDepth == 1);
+    cfg.simulations = 2;
+    Search two(cfg, kDims);
+    r = runSearch(two, *session, afterPass, model.history(), rng);
+    assert(r.visits[kPass] == 2 && r.pastEndFraction == 0.5f && r.maxDepth == 2);
+    // At the start of a game the same two simulations reach the double pass
+    // (root -> pass -> pass) but never go past it.
     Game fresh(3, 0.5f, defaultMaxMoves(3));
-    r = runSearch(one, *session, fresh, model.history(), rng);
-    assert(r.visits[kPass] == 1 && r.pastEndFraction == 0.0f);
+    r = runSearch(two, *session, fresh, model.history(), rng);
+    assert(r.visits[kPass] == 2 && r.pastEndFraction == 0.0f && r.maxDepth == 2);
     std::printf("test_past_end_fraction passed\n");
 }
 

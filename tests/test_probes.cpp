@@ -185,13 +185,20 @@ static void test_analyze_runs() {
     auto session = model.newSession(1);
     Rng rng(1);
     runSearch(search, *session, game, model.history(), rng);
-    const std::vector<std::pair<int, float>> pv = search.principalVariation(8);
+    const std::vector<PvStep> pv = search.principalVariation(8);
     assert(!pv.empty() && pv.size() <= 8);
     int best = -1, bestVisits = -1;
     for (const RootEdge& e : search.rootEdges())
         if (e.visits > bestVisits) best = e.action, bestVisits = e.visits;
-    assert(pv[0].first == best);
-    for (const auto& step : pv) assert(step.second >= -1.0f && step.second <= 1.0f);
+    assert(pv[0].action == best);
+    for (const PvStep& step : pv) {
+        assert(step.value >= -1.0f && step.value <= 1.0f && step.reward >= -1.0f && step.reward <= 1.0f);
+        assert(std::fabs(step.q - (step.reward - step.value)) < 1e-6f);   // Q = r - v_child (discount 1)
+    }
+    assert(text.find("reward") != std::string::npos);
+    const std::vector<RootEdge> edges = search.rootEdges();
+    const auto first = std::find_if(edges.begin(), edges.end(), [&](const RootEdge& e) { return e.action == best; });
+    assert(first != edges.end() && std::fabs(pv[0].q - first->q) < 1e-6f);
     std::printf("test_analyze_runs passed\n");
 }
 

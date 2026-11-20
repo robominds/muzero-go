@@ -199,6 +199,10 @@ Trainer Trainer::resume(const std::string& runDir, const std::vector<std::string
             r.floats(velocity.back().data(), p.size);
         }
         replay = std::make_unique<ReplayBuffer>(ReplayBuffer::load(r));
+        if (replay->games() > 0 && replay->game(0).boardSize != cfg.boardSize)
+            throw std::runtime_error("the replay buffer holds games of board size " +
+                                     std::to_string(replay->game(0).boardSize) + " but board_size is " +
+                                     std::to_string(cfg.boardSize));
         if (in.peek() != std::char_traits<char>::eof()) throw std::runtime_error("unexpected data at the end");
     } catch (const std::runtime_error& e) {
         throw std::runtime_error(path + ": " + e.what());

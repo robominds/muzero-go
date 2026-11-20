@@ -379,20 +379,24 @@ std::string analyzePosition(const Model& model, const Game& game, const MctsConf
         os << line;
     }
     std::snprintf(line, sizeof line,
-                  "\nsearch depth: max %d, mean %.2f; simulations past the real game's end (two passes): %.1f%%\n",
+                  "\nsearch depth: max %d, mean %.2f; simulations going beyond the real game's end (two passes): %.1f%%\n",
                   result.maxDepth, result.meanDepth, 100.0 * result.pastEndFraction);
     os << line;
 
-    // Each PV node's value is from the view of its own side to move; signed
-    // here for the side to move at the root, so the column reads as one story.
-    os << "\nprincipal variation (imagined by the dynamics; value for " << side << "):\n";
-    os << "  ply  player  move    value\n";
-    const std::vector<std::pair<int, float>> pv = search.principalVariation(kPvMaxLen);
+    // Each PV node's value is from the view of its own side to move, and an
+    // edge's reward and Q from the view of the player making that move; all
+    // three are signed here for the side to move at the root, so the
+    // columns read as one story. The reward column shows where the model
+    // puts the game's payoff (on the move that ends it, ideally).
+    os << "\nprincipal variation (imagined by the dynamics; reward, Q and value for " << side << "):\n";
+    os << "  ply  player  move   reward        Q    value\n";
+    const std::vector<PvStep> pv = search.principalVariation(kPvMaxLen);
     for (size_t i = 0; i < pv.size(); ++i) {
         const bool rootSideMoved = i % 2 == 0;
-        const float forRoot = rootSideMoved ? -pv[i].second : pv[i].second;
-        std::snprintf(line, sizeof line, "  %3zu  %6s  %4s  %+7.3f\n", i + 1, rootSideMoved ? side : other,
-                      actionToString(pv[i].first, n).c_str(), forRoot);
+        const float sign = rootSideMoved ? 1.0f : -1.0f;   // mover's view -> root side's view
+        std::snprintf(line, sizeof line, "  %3zu  %6s  %4s  %+7.3f  %+7.3f  %+7.3f\n", i + 1,
+                      rootSideMoved ? side : other, actionToString(pv[i].action, n).c_str(), sign * pv[i].reward,
+                      sign * pv[i].q, -sign * pv[i].value);
         os << line;
     }
     return os.str();

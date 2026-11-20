@@ -66,9 +66,11 @@ struct SearchResult {
     std::vector<float> policy;         // visits / sum
     float rootValue;                   // root mean value, side to move's view
     int maxDepth; float meanDepth;     // depth of each simulation's new leaf (root child = 1)
-    // Simulations whose imagined path holds two consecutive passes (counting
-    // the real previous move when it was a pass): the search went on past a
-    // point where the real game would have ended.
+    // Simulations whose imagined path goes on BEYOND two consecutive passes
+    // (counting the real previous move when it was a pass): the double pass
+    // is not the leaf, so the search expanded a state after the point where
+    // the real game would have ended. A leaf that is the double pass itself
+    // does not count.
     float pastEndFraction;
 };
 
@@ -79,6 +81,14 @@ struct RootEdge {
     int visits;
     float meanValue;   // child's mean value, from the child's side to move; 0 if unvisited
     float q;           // r + γ·(−meanValue), from the root's side to move; 0 if unvisited
+};
+
+// One ply of the principal variation.
+struct PvStep {
+    int action;
+    float value;       // the child's mean value, from the child's side to move
+    float reward;      // predicted reward on the edge, from the mover's view
+    float q;           // r + γ·(−value), from the mover's view
 };
 
 class Search {                          // one game's tree; reused across moves (cleared by beginRoot)
@@ -100,10 +110,10 @@ public:
     const MinMaxStats& minMaxStats() const { return minmax_; }   // this tree's Q range so far
     // The principal variation, read from the tree: from the root, repeatedly
     // the most visited child (ties: lowest action), up to maxLen plies, while
-    // that child has visits. Each entry is (action, that child's mean value
-    // from its own side to move): the line the search believes in, entirely
-    // in imagined space below the root.
-    std::vector<std::pair<int, float>> principalVariation(int maxLen) const;
+    // that child has visits. Each entry is the move, that child's mean
+    // value, and the edge's reward and Q: the line the search believes in,
+    // entirely in imagined space below the root.
+    std::vector<PvStep> principalVariation(int maxLen) const;
 
 private:
     struct Node {

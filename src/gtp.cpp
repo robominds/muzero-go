@@ -171,8 +171,11 @@ std::string GtpEngine::dispatch(const std::string& command, const std::vector<st
     if (command == "komi") {
         float komi = 0;
         if (args.size() != 1 || !parseFloat(args[0], komi)) return fail("syntax error");
-        // Komi decides every terminal value already in the search tree, so
-        // the game is replayed under the new komi and the tree dropped.
+        // The network never sees komi (no observation plane carries it; it
+        // learned the komi of its training games), so for a MuZero player
+        // komi only affects final_score (and the scoring of a player that
+        // plays games out, such as the rollout bot). The game is replayed
+        // under the new komi so that scoring uses it.
         restart(komi, game_.moves());
         return "";
     }

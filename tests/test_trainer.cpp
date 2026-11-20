@@ -11,7 +11,10 @@
 #include "mzgo/backend.hpp"
 #include "mzgo/checkpoint.hpp"
 #include "mzgo/config.hpp"
+#include "mzgo/game_record.hpp"
+#include "mzgo/replay_buffer.hpp"
 #include "mzgo/rng.hpp"
+#include "mzgo/serialize.hpp"
 #include "mzgo/trainer.hpp"
 
 using namespace mzgo;
@@ -170,12 +173,13 @@ static void test_resume_refuses_arch_change() {
     } catch (const std::invalid_argument& e) {
         assert(contains(e.what(), "filters"));
     }
-    // unroll_steps fixes log.csv's columns, so it cannot change either.
+    // unroll_steps is an architecture key too: batch norm keeps statistics
+    // per unroll step (and log.csv has columns per step).
     try {
         Trainer::resume(dir, {"unroll_steps=3"});
         assert(false && "expected std::invalid_argument");
     } catch (const std::invalid_argument& e) {
-        assert(contains(e.what(), "unroll_steps"));
+        assert(contains(e.what(), "unroll_steps") && contains(e.what(), "architecture key"));
     }
     // Restating an architecture key's value is no change; tunable keys may change.
     Trainer ok = Trainer::resume(dir, {"filters=8", "simulations=4"});
@@ -199,6 +203,41 @@ static void test_corrupt_state() {
         assert(contains(e.what(), path));
     }
     std::printf("test_corrupt_state passed\n");
+}
+
+// A state.bin whose replay games are of another board size than the
+// config's is refused, naming the file.
+static void test_resume_refuses_replay_board_size() {
+    const std::string dir = freshDir("replay_size");
+    const RunConfig cfg = tinyConfig();
+    Trainer::startNew(cfg, dir);
+    const std::string path = dir + "/state.bin";
+    const std::string full = readFile(path);
+    // A new run's replay buffer is empty and last: magic, version, capacity, count.
+    const size_t emptyReplay = 16;
+    assert(full.compare(full.size() - emptyReplay, 4, "MZRB") == 0);
+    GameRecord g;
+    g.boardSize = 7;
+    g.komi = cfg.komi;
+    g.moves = {0, 1};
+    g.stones.assign(3u * 49, 0);
+    g.policies.assign(2u * 50, 0.0f);
+    g.rootValues.assign(2, 0.0f);
+    ReplayBuffer replay(cfg.replayGames);
+    replay.add(g);
+    std::ostringstream tail(std::ios::binary);
+    { BinaryWriter w(tail); replay.save(w); }
+    {
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        out << full.substr(0, full.size() - emptyReplay) << tail.str();
+    }
+    try {
+        Trainer::resume(dir, {});
+        assert(false && "expected std::runtime_error");
+    } catch (const std::runtime_error& e) {
+        assert(contains(e.what(), path) && contains(e.what(), "board size"));
+    }
+    std::printf("test_resume_refuses_replay_board_size passed\n");
 }
 
 static void test_refusals() {
@@ -295,6 +334,7 @@ int main() {
     test_threads_independent();
     test_resume_refuses_arch_change();
     test_corrupt_state();
+    test_resume_refuses_replay_board_size();
     test_refusals();
     test_nan_loss_stops();
     test_nan_weights_stop();

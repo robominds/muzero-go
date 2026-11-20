@@ -28,7 +28,9 @@ public:
 
     // Format: "MZRB", u32 version 1, u32 capacity, u32 game count, then games.
     void save(BinaryWriter&) const;
-    static ReplayBuffer load(BinaryReader&);   // throws std::runtime_error on bad data
+    // Throws std::runtime_error on bad data, including games whose board
+    // size differs from the first game's.
+    static ReplayBuffer load(BinaryReader&);
 
 private:
     void rebuildPrefix();

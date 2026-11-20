@@ -3,6 +3,7 @@
 #include <cassert>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include "mzgo/encode.hpp"
 #include "mzgo/symmetry.hpp"
 
@@ -80,11 +81,18 @@ ReplayBuffer ReplayBuffer::load(BinaryReader& r) {
         throw std::runtime_error("replay buffer: bad capacity or game count");
     }
     ReplayBuffer buf(static_cast<int>(capacity));
+    uint32_t firstSize = 0;
     for (uint32_t i = 0; i < count; ++i) {
         GameRecord g;
         const uint32_t n = r.u32();
         if (n < static_cast<uint32_t>(kMinBoardSize) || n > static_cast<uint32_t>(kMaxBoardSize)) {
             throw std::runtime_error("replay buffer: bad board size");
+        }
+        // sampleBatch sizes a batch from the first game: every game must agree.
+        if (i == 0) firstSize = n;
+        if (n != firstSize) {
+            throw std::runtime_error("replay buffer: game " + std::to_string(i) + " has board size " +
+                                     std::to_string(n) + " but the first game has " + std::to_string(firstSize));
         }
         g.boardSize = static_cast<int>(n);
         g.komi = r.f32();

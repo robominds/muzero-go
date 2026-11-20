@@ -121,9 +121,32 @@ static void test_save_load() {
     std::printf("test_save_load ok\n");
 }
 
+// A buffer holds one board size: a file whose games disagree is refused.
+static void test_load_refuses_mixed_board_sizes() {
+    GameRecord big = rec(3, 1);
+    big.boardSize = 7;
+    big.stones.assign(4u * 49, 0);
+    big.policies.assign(3u * 50, 0.0f);
+    ReplayBuffer buf(3);
+    buf.add(rec(4, 2));
+    buf.add(big);
+    std::stringstream ss;
+    { BinaryWriter w(ss); buf.save(w); }
+    BinaryReader r(ss);
+    bool threw = false;
+    try {
+        ReplayBuffer::load(r);
+    } catch (const std::runtime_error& e) {
+        threw = std::string(e.what()).find("board size") != std::string::npos;
+    }
+    assert(threw);
+    std::printf("test_load_refuses_mixed_board_sizes ok\n");
+}
+
 int main() {
     test_uniform_positions();
     test_capacity();
     test_save_load();
+    test_load_refuses_mixed_board_sizes();
     return 0;
 }
