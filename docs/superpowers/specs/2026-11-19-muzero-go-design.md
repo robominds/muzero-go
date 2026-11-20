@@ -116,7 +116,7 @@ feature maps (spatial, as in the paper, so actions can be planes).
   "in board games without intermediate rewards, we omit the reward
   prediction loss"); this implementation therefore has **no reward head by
   default** and search uses r = 0. An optional reward head
-  (`reward_head = true`: 1×1 conv → BN → ReLU → FC → tanh, trained on the
+  (`reward_head = true`: the value head's shape, 1×1 conv → BN → ReLU → FC → ReLU → FC → tanh, reading the normalized sᵏ; trained on the
   final outcome at the last move, 0 elsewhere) exists as an experiment
   switch, off in both presets.
 - **Prediction f(sᵏ) → (pᵏ, vᵏ).** AlphaZero heads, no residual blocks of
