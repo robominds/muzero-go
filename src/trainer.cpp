@@ -33,9 +33,9 @@ using Clock = std::chrono::steady_clock;
 // state.bin: magic "MZRS", u32 version, i32 generation, u64 global step, the
 // network (checkpoint.hpp's format), u32 velocity count, per velocity tensor
 // u64 size + floats (params() order), the replay buffer (ReplayBuffer::save),
-// then the league: u32 member count and an i32 generation per slot (-1 = the
-// random bot). Nothing may follow. Version 1 has no league and loads with an
-// empty one.
+// then the league: u32 member count and per slot an i32 generation (-1 = the
+// random bot) and a u8 beaten-last-generation flag. Nothing may follow.
+// Version 1 has no league and loads with an empty one.
 const char kStateMagic[4] = {'M', 'Z', 'R', 'S'};
 constexpr uint32_t kStateVersion = 2;
 
@@ -241,7 +241,10 @@ Trainer Trainer::resume(const std::string& runDir, const std::vector<std::string
                 if (m < -1 || m >= generation)
                     throw std::runtime_error("league slot " + std::to_string(i) + " holds generation " +
                                              std::to_string(m) + ", not one before " + std::to_string(generation));
-                league.push_back(LeagueMember{m});
+                const uint8_t beaten = r.u8();
+                if (beaten > 1)
+                    throw std::runtime_error("league slot " + std::to_string(i) + " has a bad beaten flag");
+                league.push_back(LeagueMember{m, beaten == 1});
             }
         }
         if (static_cast<int>(league.size()) != cfg.leagueSize)
@@ -325,7 +328,10 @@ void Trainer::writeState() const {
     }
     replay_.save(w);
     w.u32(static_cast<uint32_t>(league_.size()));
-    for (const LeagueMember& m : league_) w.i32(m.generation);
+    for (const LeagueMember& m : league_) {
+        w.i32(m.generation);
+        w.u8(m.beatenLastGeneration ? 1 : 0);
+    }
     writeFileAtomically(statePath(runDir_), buffer.str());
 }
 
@@ -447,13 +453,12 @@ void Trainer::runGeneration() {
     }
 
     // The league: the network that played (generation g - 1's) replaces the
-    // most clearly beaten member, at most one per generation.
+    // most clearly beaten eligible member (a random one needs a second win in
+    // a row), at most one per generation; every slot's strike is updated. A
+    // generation without league games beats nobody, so it clears the strikes.
     const std::vector<LeagueMember> leagueBefore = league_;
-    int replacedSlot = -1;
-    if (leagueGames > 0) {
-        replacedSlot = chooseReplacement(results, cfg_.leagueReplaceScore, cfg_.leagueMinGames);
-        if (replacedSlot >= 0) league_[static_cast<size_t>(replacedSlot)] = LeagueMember{g - 1};
-    }
+    const int replacedSlot =
+        hasLeague ? advanceLeague(league_, results, cfg_.leagueReplaceScore, cfg_.leagueMinGames, g - 1) : -1;
 
     // 4. Checkpoint, then state.bin: from here on the generation is done
     // and a resume continues with g + 1. A crash after this point (in the
@@ -529,8 +534,11 @@ void Trainer::runGeneration() {
             if (leagueGames > 0) *log_ << ", mean length " << num(leagueStats.meanLength);
             *log_ << ") ";
             for (size_t i = 0; i < leagueBefore.size(); ++i)
+                // '*': a random member's strike (beaten, not replaced); one
+                // more win in a row replaces it.
                 *log_ << (i ? " | " : "") << leagueBefore[i].name() << " "
-                      << (results[i].games > 0 ? num(results[i].score()) : "-");
+                      << (results[i].games > 0 ? num(results[i].score()) : "-")
+                      << (league_[i].isRandom() && league_[i].beatenLastGeneration ? "*" : "");
             if (replacedSlot >= 0)
                 *log_ << ", slot " << replacedSlot << " -> " << league_[static_cast<size_t>(replacedSlot)].name();
         }

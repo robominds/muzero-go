@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdio>
@@ -372,17 +373,18 @@ static std::vector<std::string> splitOn(const std::string& s, char sep) {
 static void test_league_generation() {
     const std::string dir = freshDir("league");
     RunConfig c = leagueConfig();
-    c.generations = 1;
+    c.generations = 2;
     Trainer t = Trainer::startNew(c, dir);
     assert(t.league().size() == 2 && t.league()[0].isRandom() && t.league()[1].isRandom());
     std::ostringstream summary;
     t.setLog(&summary);
-    t.run();
-    // Exactly one slot now holds generation 0, the network that played; the other is still random.
+    t.runGeneration();
+    // Any score beats a member here, but a random member needs two wins in a
+    // row: after generation 1 both are still random, each with a first strike.
     const std::vector<LeagueMember>& league = t.league();
     assert(league.size() == 2);
-    const int replaced = league[0].isRandom() ? 1 : 0;
-    assert(league[replaced].generation == 0 && league[1 - replaced].isRandom());
+    assert(league[0].isRandom() && league[1].isRandom());
+    assert(league[0].beatenLastGeneration && league[1].beatenLastGeneration);
 
     const std::vector<std::string> log = lines(readFile(dir + "/log.csv"));
     assert(log.size() == 2);
@@ -392,7 +394,7 @@ static void test_league_generation() {
     assert(row.size() == splitCsv(log[0]).size());
     const size_t n = row.size();
     assert(row[n - kMembers] == "random;random");   // the members the scores were against
-    assert(row[n - kReplaced] == std::to_string(replaced));
+    assert(row[n - kReplaced] == "-1");
     const std::vector<std::string> scores = splitOn(row[n - kScores], ';');
     assert(scores.size() == 2);
     for (const std::string& s : scores) assert(!s.empty() && std::stod(s) >= 0 && std::stod(s) <= 1);
@@ -412,17 +414,36 @@ static void test_league_generation() {
     assert(fs::exists(dir + "/sgf/gen_0001_league_0.sgf") && fs::exists(dir + "/sgf/gen_0001_league_1.sgf"));
     assert(!fs::exists(dir + "/sgf/gen_0001_league_2.sgf"));
 
-    // The summary line names the members and their scores, and the replacement.
+    // The summary line names the members and their scores, '*' marking a
+    // random member's first strike; nothing was replaced.
     const std::string line = summary.str();
     assert(contains(line, ", league (4 games, mean length " + row[n - kLeagueMeanLength] + ") random " + scores[0] +
-                              " | random " + scores[1]));
+                              "* | random " + scores[1] + "*"));
     assert(contains(line, "selfplay ") && contains(line, "s (4 games, mean length " + row[4] + ")"));
-    assert(contains(line, ", slot " + std::to_string(replaced) + " -> gen_0"));
+    assert(!contains(line, "-> gen_"));
 
-    // state.bin keeps the league.
-    Trainer resumed = Trainer::resume(dir, {});
-    assert(resumed.league().size() == 2 && resumed.league()[replaced].generation == 0 &&
-           resumed.league()[1 - replaced].isRandom());
+    // state.bin keeps the league, strikes included.
+    {
+        Trainer resumed = Trainer::resume(dir, {});
+        assert(resumed.league().size() == 2 && resumed.league()[0].isRandom() &&
+               resumed.league()[0].beatenLastGeneration && resumed.league()[1].beatenLastGeneration);
+    }
+
+    // Generation 2: both are beaten again, so both are eligible; one (the
+    // higher score, ties to slot 0) is replaced by gen 1, the network that
+    // played, and the other keeps its strike.
+    summary.str("");
+    t.runGeneration();
+    const std::vector<std::string> row2 = splitCsv(lines(readFile(dir + "/log.csv"))[2]);
+    const int replaced = std::stoi(row2[n - kReplaced]);
+    assert(replaced == 0 || replaced == 1);
+    assert(row2[n - kMembers] == "random;random");
+    assert(league[replaced].generation == 1 && !league[replaced].beatenLastGeneration);
+    assert(league[1 - replaced].isRandom() && league[1 - replaced].beatenLastGeneration);
+    const std::vector<std::string> scores2 = splitOn(row2[n - kScores], ';');
+    assert(std::stod(scores2[replaced]) >= std::stod(scores2[1 - replaced]));
+    assert(contains(summary.str(), ", slot " + std::to_string(replaced) + " -> gen_1"));
+    assert(contains(summary.str(), "random " + scores2[1 - replaced] + "*"));
     std::printf("test_league_generation passed\n");
 }
 
@@ -459,24 +480,24 @@ static void test_league_resume_matches_uninterrupted() {
             const std::string name = "/sgf/gen_000" + std::to_string(g) + "_league_" + std::to_string(i) + ".sgf";
             assert(readFile(straight + name) == readFile(split + name));
         }
-    // Each generation replaced one slot, and the next row shows the new
-    // member: generation 2 played gen 0 (in the league after generation 1).
+    // The split falls between the random members' first strike (generation
+    // 1, nothing replaced) and their second (generation 2, one replaced by
+    // gen 1); generation 3 replaces a slot again. Each row shows the members
+    // the generation played, so a new member appears in the next row.
     const std::vector<std::string> log = lines(readFile(straight + "/log.csv"));
     assert(log.size() == 4);
     std::vector<std::vector<std::string>> rows;
-    for (int g = 1; g <= 3; ++g) {
-        rows.push_back(splitCsv(log[g]));
-        const std::string& replaced = rows.back()[rows.back().size() - kReplaced];
+    for (int g = 1; g <= 3; ++g) rows.push_back(splitCsv(log[g]));
+    const size_t n = rows[0].size();
+    assert(rows[0][n - kMembers] == "random;random" && rows[0][n - kReplaced] == "-1");
+    for (int g = 2; g <= 3; ++g) {
+        const std::string& replaced = rows[g - 1][n - kReplaced];
         assert(replaced == "0" || replaced == "1");
     }
-    const size_t n = rows[0].size();
-    assert(rows[0][n - kMembers] == "random;random");
-    for (int g = 2; g <= 3; ++g) {
-        std::vector<std::string> expected = splitOn(rows[g - 2][n - kMembers], ';');
-        expected[std::stoi(rows[g - 2][n - kReplaced])] = "gen_" + std::to_string(g - 2);
-        assert(rows[g - 1][n - kMembers] == expected[0] + ";" + expected[1]);
-    }
-    assert(contains(rows[1][n - kMembers], "gen_0"));
+    assert(rows[1][n - kMembers] == "random;random");
+    std::vector<std::string> expected = splitOn(rows[1][n - kMembers], ';');
+    expected[std::stoi(rows[1][n - kReplaced])] = "gen_1";
+    assert(rows[2][n - kMembers] == expected[0] + ";" + expected[1]);
     std::printf("test_league_resume_matches_uninterrupted passed\n");
 }
 
@@ -522,9 +543,12 @@ static void test_league_size_fixed_on_resume() {
 static void test_league_missing_checkpoint() {
     const std::string dir = freshDir("league_missing");
     RunConfig c = leagueConfig();
-    c.generations = 1;
-    Trainer::startNew(c, dir).run();   // one slot now holds gen 0
-    const std::string path = checkpointPath(dir, 0);
+    c.generations = 2;
+    Trainer t = Trainer::startNew(c, dir);
+    t.run();   // two strikes: one slot now holds gen 1
+    const int held = std::max(t.league()[0].generation, t.league()[1].generation);
+    assert(held == 1);
+    const std::string path = checkpointPath(dir, held);
     fs::remove(path);
     try {
         Trainer::resume(dir, {});

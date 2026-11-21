@@ -45,14 +45,16 @@ current network, so those positions enter training.
    the main agent's actions).
 5. **"Beats" (Claude's call).** Decided from the generation's own league
    games, so no extra games are played. A member is beaten when the learner
-   scored at least `league_replace_score` (default 0.55; a draw counts 0.5)
-   over at least `league_min_games` (default 20) games against it. With the
-   presets (200 games, fraction 0.5, 3 slots) the members get 34, 34 and 32
-   games. Settings under which some member gets fewer than
-   `league_min_games` games a generation are rejected, since that member
-   could never be replaced.
+   scored at least `league_replace_score` (default 0.6, raised from 0.55 by
+   Mark; a draw counts 0.5) over at least `league_min_games` (default 20)
+   games against it. With the presets (200 games, fraction 0.5, 3 slots) the
+   members get 34, 34 and 32 games, so beating one takes 20.4, 20.4 and
+   19.2 points (0.55 took 18.7, 18.7 and 17.6). Settings under which some
+   member gets fewer than `league_min_games` games a generation are
+   rejected, since that member could never be replaced.
    In conversation this was "0.55 over 40 games" from separate matches; using
-   the self-play games instead saves those matches.
+   the self-play games instead saves those matches. A random-bot member must
+   be beaten twice in a row (decision 10).
 6. **One replacement per generation.** If several members are beaten, only the
    one with the highest score is replaced (ties: the lowest slot). This keeps
    the league from filling with copies of one network in a single step.
@@ -62,8 +64,20 @@ current network, so those positions enter training.
    member, so `arena_rollout` is the held-out measure; `arena_random` is no
    longer held out once the league uses the random bot.
 9. **Persistence.** The league (one entry per slot: random bot or a generation
-   number) is part of `state.bin`, so resume continues it exactly.
-   `league_size` cannot change on resume.
+   number, and whether it was beaten in the last generation) is part of
+   `state.bin`, so resume continues it exactly. `league_size` cannot change
+   on resume.
+10. **Random members need two consecutive wins (Mark's choice).** A beaten
+   network member is replaced at once, but a random-bot member only when it
+   was also beaten in the previous generation. The random bot is the only
+   opponent that never comes back once replaced (a replaced network is only
+   one of many similar ones, and later networks join anyway), so one noisy
+   win should not remove it. Each slot keeps a flag, "beaten last
+   generation": every generation it becomes whether the slot was beaten,
+   and false for the slot just replaced. A random member beaten but not
+   replaced (its first strike, or another slot chosen) keeps the flag for
+   the next generation; a generation without a win clears it. Decision 6
+   still allows one replacement per generation, among the eligible slots.
 
 ## Non-goals
 

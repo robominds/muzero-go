@@ -11,9 +11,13 @@
 // colours whatever league_size is. The
 // games themselves decide who is beaten: a member against whom the learner
 // scored at least league_replace_score (a draw counts half) over at least
-// league_min_games games is beaten, and the most clearly beaten one (one per
-// generation) is replaced by the network that played, generation g - 1's
-// during generation g. The league is part of state.bin, so a resume
+// league_min_games games is beaten. A beaten network member can be replaced
+// at once; the random bot only when it was also beaten the generation
+// before (two wins in a row: it is the one opponent that never comes back
+// once replaced, so one noisy win should not remove it). Of those, the most
+// clearly beaten one (one per generation) is replaced by the network that
+// played, generation g - 1's during generation g. The league, with each
+// slot's beaten-last-generation flag, is part of state.bin, so a resume
 // continues it exactly.
 #pragma once
 #include <string>
@@ -26,6 +30,9 @@ namespace mzgo {
 // checkpoints/gen_GGGG.mzn.
 struct LeagueMember {
     int generation = -1;
+    // Beaten in the previous generation (and not replaced): a random member
+    // with this set is replaced when it is beaten again.
+    bool beatenLastGeneration = false;
     bool isRandom() const { return generation < 0; }
     std::string name() const;   // "random" or "gen_N"
 };
@@ -53,11 +60,24 @@ int leagueFewestGames(int leagueGames, int size);
 std::vector<LeagueResult> leagueResults(const std::vector<GameRecord>& leagueGames,
                                         const std::vector<int>& opponentOf, int members);
 
-// The slot to replace: among members with games >= minGames and score() >=
-// threshold, the highest score; ties go to the lowest slot; -1 if none. A
-// member that played no games is never chosen (even with minGames 0). The
-// score is held against the threshold at float precision, the config's, so
-// 11 of 20 games meets a threshold of 0.55f.
-int chooseReplacement(const std::vector<LeagueResult>& results, double threshold, int minGames);
+// Whether the learner beat a member this generation: games >= minGames and
+// score() >= threshold. A member that played no games is never beaten (even
+// with minGames 0). The score is held against the threshold at float
+// precision, the config's, so 12 of 20 games meets a threshold of 0.6f.
+bool leagueBeaten(const LeagueResult& result, double threshold, int minGames);
+
+// The slot to replace: among the eligible members (a network member that is
+// beaten, a random member that is beaten and beatenLastGeneration), the
+// highest score; ties go to the lowest slot; -1 if none. members and results
+// are per slot, of equal size.
+int chooseReplacement(const std::vector<LeagueMember>& members, const std::vector<LeagueResult>& results,
+                      double threshold, int minGames);
+
+// One generation's league update: the chosen slot (chooseReplacement), if
+// any, gets LeagueMember{newMember}; every other slot's beatenLastGeneration
+// becomes whether it was beaten this generation (the replaced slot's is
+// false: it holds a new member). Returns the slot, or -1.
+int advanceLeague(std::vector<LeagueMember>& members, const std::vector<LeagueResult>& results, double threshold,
+                  int minGames, int newMember);
 
 } // namespace mzgo

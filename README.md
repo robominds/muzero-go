@@ -151,11 +151,15 @@ all held by the random bot at first. Only the network's own moves in those
 games train the policy; every position trains value, reward and dynamics.
 When the network scores well enough against a member, the network that
 played (generation g − 1's during generation g) takes its slot, at most one
-slot per generation. The keys:
+slot per generation. A random-bot member must be beaten in two generations
+in a row first (it never comes back once replaced, so one noisy win should
+not remove it); a network member goes after one. The summary line marks a
+random member's first strike with `*` after its score (`random 0.7*`);
+`state.bin` keeps the strikes, so a resume continues them. The keys:
 
 - `league_size` (default 0 = off, 0..8): the number of slots; cannot change on resume.
 - `league_fraction` (default 0.5, 0..1): round(`games_per_generation` × this) of each generation's games are league games; games 2k and 2k + 1 play slot k mod `league_size`, the network Black in the first and White in the second.
-- `league_replace_score` (default 0.55, 0..1): the score (a draw counts half) that beats a member.
+- `league_replace_score` (default 0.6, 0..1): the score (a draw counts half) that beats a member.
 - `league_min_games` (default 20, ≥ 0): the fewest games against a member for its score to count; a config where some slot gets fewer league games a generation than this is rejected (that member could never be replaced).
 
 `league_fraction` counts games, not positions: league games against the

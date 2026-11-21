@@ -16,12 +16,16 @@
 //   3. train_steps SGD steps, each on a batch of K-step unrolls sampled
 //      from the window (network.hpp's trainStep, then the optimizer);
 //      with a league, then at most one beaten member is replaced by the
-//      network that played (chooseReplacement);
+//      network that played, a random member only when it was beaten in the
+//      previous generation too (league.hpp's advanceLeague);
 //   4. the new network is saved as checkpoints/gen_GGGG.mzn, then the whole
 //      run's state as state.bin;
 //   5. every arena_every generations the network plays an earlier
 //      generation, the rollout bot and the random bot;
-//   6. one row of log.csv and one summary line.
+//   6. one row of log.csv and one summary line. With a league the summary
+//      ends with each slot's member and score ("-" without games; "*" after
+//      a random member beaten this generation but not replaced, its first
+//      strike) and the replacement, if any ("slot 0 -> gen_14").
 //
 // A run lives in one directory:
 //   config.cfg        the resolved config (every key)

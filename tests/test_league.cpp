@@ -73,27 +73,95 @@ static void test_results() {
     std::printf("test_results passed\n");
 }
 
+// n network members (generation 0), none beaten last generation.
+static std::vector<LeagueMember> networks(int n) { return std::vector<LeagueMember>(static_cast<size_t>(n), LeagueMember{0}); }
+
+static void test_beaten() {
+    assert(leagueBeaten({20, 11}, 0.55, 20));
+    assert(leagueBeaten({20, 11}, 0.55f, 20));     // the config's float threshold: 11 of 20 still meets it
+    assert(!leagueBeaten({20, 10.5}, 0.55f, 20));  // below the threshold
+    assert(leagueBeaten({20, 12}, 0.6f, 20));      // the default, 0.6f, is a little above 0.6 too
+    assert(!leagueBeaten({20, 11.5}, 0.6f, 20));
+    assert(!leagueBeaten({19, 19}, 0.55, 20));     // too few games
+    assert(!leagueBeaten({0, 0}, 0.0, 0));         // no games: nothing to judge by
+    assert(leagueBeaten({1, 0}, 0.0, 0));
+    std::printf("test_beaten passed\n");
+}
+
+// Network members: replaced after one win, as before the two-strike rule.
 static void test_choose_replacement() {
     // Below the threshold: none.
-    assert(chooseReplacement({{20, 10}, {20, 10.5}}, 0.55, 20) == -1);
+    assert(chooseReplacement(networks(2), {{20, 10}, {20, 10.5}}, 0.55, 20) == -1);
     // Enough score but too few games: none.
-    assert(chooseReplacement({{19, 19}, {10, 10}}, 0.55, 20) == -1);
+    assert(chooseReplacement(networks(2), {{19, 19}, {10, 10}}, 0.55, 20) == -1);
     // Two eligible: the higher score.
-    assert(chooseReplacement({{20, 12}, {20, 16}, {20, 5}}, 0.55, 20) == 1);
+    assert(chooseReplacement(networks(3), {{20, 12}, {20, 16}, {20, 5}}, 0.55, 20) == 1);
     // A tie goes to the lower slot.
-    assert(chooseReplacement({{20, 5}, {20, 16}, {20, 16}}, 0.55, 20) == 1);
+    assert(chooseReplacement(networks(3), {{20, 5}, {20, 16}, {20, 16}}, 0.55, 20) == 1);
     // At the threshold and at min games exactly: eligible.
-    assert(chooseReplacement({{20, 11}}, 0.55, 20) == 0);
-    // The config's threshold is a float (0.55f is a little above 0.55):
-    // 11 of 20 still meets it.
-    assert(chooseReplacement({{20, 11}}, 0.55f, 20) == 0);
-    assert(chooseReplacement({{20, 10.5}}, 0.55f, 20) == -1);
+    assert(chooseReplacement(networks(1), {{20, 11}}, 0.55, 20) == 0);
+    assert(chooseReplacement(networks(1), {{20, 11}}, 0.55f, 20) == 0);
+    assert(chooseReplacement(networks(1), {{20, 10.5}}, 0.55f, 20) == -1);
     // A member that played no games is never replaced, even with min games 0
     // and threshold 0 (there is nothing to judge it by).
-    assert(chooseReplacement({{0, 0}, {1, 0}}, 0.0, 0) == 1);
-    assert(chooseReplacement({{0, 0}}, 0.0, 0) == -1);
-    assert(chooseReplacement({}, 0.55, 20) == -1);
+    assert(chooseReplacement(networks(2), {{0, 0}, {1, 0}}, 0.0, 0) == 1);
+    assert(chooseReplacement(networks(1), {{0, 0}}, 0.0, 0) == -1);
+    assert(chooseReplacement({}, {}, 0.55, 20) == -1);
+    // A random member is eligible only when it was beaten last generation too.
+    std::vector<LeagueMember> mixed = {LeagueMember{}, LeagueMember{3}};
+    assert(chooseReplacement(mixed, {{20, 20}, {20, 5}}, 0.55, 20) == -1);
+    mixed[0].beatenLastGeneration = true;
+    assert(chooseReplacement(mixed, {{20, 20}, {20, 5}}, 0.55, 20) == 0);
     std::printf("test_choose_replacement passed\n");
+}
+
+static const LeagueResult kWin{20, 16}, kLoss{20, 4};
+
+// advanceLeague over several generations (threshold 0.55, 20 games).
+static void test_two_strikes() {
+    // Beaten once: not replaced, but marked; beaten again next generation: replaced.
+    std::vector<LeagueMember> league(1);
+    assert(advanceLeague(league, {kWin}, 0.55, 20, 4) == -1);
+    assert(league[0].isRandom() && league[0].beatenLastGeneration);
+    assert(advanceLeague(league, {kWin}, 0.55, 20, 5) == 0);
+    assert(league[0].generation == 5 && !league[0].beatenLastGeneration);
+
+    // Beaten, not beaten, beaten: the wins are not consecutive, so it stays.
+    league = std::vector<LeagueMember>(1);
+    assert(advanceLeague(league, {kWin}, 0.55, 20, 1) == -1 && league[0].beatenLastGeneration);
+    assert(advanceLeague(league, {kLoss}, 0.55, 20, 2) == -1 && !league[0].beatenLastGeneration);
+    assert(advanceLeague(league, {kWin}, 0.55, 20, 3) == -1 && league[0].isRandom());
+    assert(league[0].beatenLastGeneration);
+
+    // A network member beaten once is replaced at once.
+    league = {LeagueMember{2}};
+    assert(advanceLeague(league, {kWin}, 0.55, 20, 7) == 0);
+    assert(league[0].generation == 7 && !league[0].beatenLastGeneration);
+
+    // A random member on its second strike, but a network member scored
+    // higher: the network member goes, and the random one stays marked.
+    league = {LeagueMember{}, LeagueMember{2}};
+    league[0].beatenLastGeneration = true;
+    assert(advanceLeague(league, {{20, 13}, {20, 18}}, 0.55, 20, 8) == 1);
+    assert(league[0].isRandom() && league[0].beatenLastGeneration);
+    assert(league[1].generation == 8 && !league[1].beatenLastGeneration);
+    // ... so the next win replaces it.
+    assert(advanceLeague(league, {{20, 13}, {20, 4}}, 0.55, 20, 9) == 0 && league[0].generation == 9);
+
+    // Two random members beaten in the same generation: both marked, then
+    // only one (the higher score) replaced; the other stays marked.
+    league = std::vector<LeagueMember>(2);
+    assert(advanceLeague(league, {{20, 12}, {20, 14}}, 0.55, 20, 1) == -1);
+    assert(league[0].beatenLastGeneration && league[1].beatenLastGeneration);
+    assert(advanceLeague(league, {{20, 12}, {20, 14}}, 0.55, 20, 2) == 1);
+    assert(league[0].isRandom() && league[0].beatenLastGeneration && league[1].generation == 2);
+
+    // A generation without games (league_fraction too small): nobody is
+    // beaten, so a first strike is forgotten.
+    league = std::vector<LeagueMember>(1);
+    advanceLeague(league, {kWin}, 0.55, 20, 1);
+    assert(advanceLeague(league, {LeagueResult{}}, 0.55, 20, 2) == -1 && !league[0].beatenLastGeneration);
+    std::printf("test_two_strikes passed\n");
 }
 
 int main() {
@@ -101,6 +169,8 @@ int main() {
     test_game_count();
     test_opponents();
     test_results();
+    test_beaten();
     test_choose_replacement();
+    test_two_strikes();
     return 0;
 }

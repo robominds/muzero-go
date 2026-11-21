@@ -46,15 +46,31 @@ std::vector<LeagueResult> leagueResults(const std::vector<GameRecord>& leagueGam
     return results;
 }
 
-int chooseReplacement(const std::vector<LeagueResult>& results, double threshold, int minGames) {
+bool leagueBeaten(const LeagueResult& r, double threshold, int minGames) {
+    return r.games >= std::max(1, minGames) && static_cast<float>(r.score()) >= static_cast<float>(threshold);
+}
+
+int chooseReplacement(const std::vector<LeagueMember>& members, const std::vector<LeagueResult>& results,
+                      double threshold, int minGames) {
+    assert(members.size() == results.size());
     int best = -1;
     for (size_t i = 0; i < results.size(); ++i) {
         const LeagueResult& r = results[i];
-        if (r.games < std::max(1, minGames)) continue;
-        if (static_cast<float>(r.score()) < static_cast<float>(threshold)) continue;
+        if (!leagueBeaten(r, threshold, minGames)) continue;
+        if (members[i].isRandom() && !members[i].beatenLastGeneration) continue;   // its first strike
         if (best < 0 || r.score() > results[static_cast<size_t>(best)].score()) best = static_cast<int>(i);
     }
     return best;
+}
+
+int advanceLeague(std::vector<LeagueMember>& members, const std::vector<LeagueResult>& results, double threshold,
+                  int minGames, int newMember) {
+    const int slot = chooseReplacement(members, results, threshold, minGames);
+    assert(members.size() == results.size());
+    for (size_t i = 0; i < members.size(); ++i)
+        members[i].beatenLastGeneration = leagueBeaten(results[i], threshold, minGames);
+    if (slot >= 0) members[static_cast<size_t>(slot)] = LeagueMember{newMember};
+    return slot;
 }
 
 } // namespace mzgo

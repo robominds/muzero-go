@@ -131,7 +131,7 @@ static void test_errors() {
 // The league keys: defaults, parsing and the round trip.
 static void test_league_keys() {
     const RunConfig d;
-    assert(d.leagueSize == 0 && d.leagueFraction == 0.5f && d.leagueReplaceScore == 0.55f &&
+    assert(d.leagueSize == 0 && d.leagueFraction == 0.5f && d.leagueReplaceScore == 0.6f &&
            d.leagueMinGames == 20);
     const std::string text = configToString(d);
     for (const char* line : {"league_size = 0\n", "league_fraction = 0.5\n", "league_min_games = 20\n"})

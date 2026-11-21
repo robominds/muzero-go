@@ -29,8 +29,9 @@ const char* const kUsage =
     "League play (off by default): --set league_size=3 (slots, 0..8) plays\n"
     "league_fraction (0.5) of each generation's games against the slots'\n"
     "members, all the random bot at first; a member the network scores\n"
-    "league_replace_score (0.55) against over league_min_games (20) games is\n"
-    "replaced by it, one per generation.\n";
+    "league_replace_score (0.6) against over league_min_games (20) games is\n"
+    "replaced by it, one per generation; the random bot only after two such\n"
+    "generations in a row.\n";
 
 int usageError(const std::string& message) {
     std::fprintf(stderr, "error: %s\n\n%s", message.c_str(), kUsage);
