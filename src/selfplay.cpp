@@ -110,7 +110,7 @@ void playGroup(const Model& model, const SelfPlayConfig& cfg, uint64_t seed, con
                 const auto& moves = g.game.moves();
                 const bool previousMoveWasPass = !moves.empty() && moves.back() == g.game.board().passAction();
                 g.search.beginRoot(out.hidden.data() + b * hs, out.logits.data() + b * dims.actions(),
-                                   out.values[b], g.game.legalActions(), previousMoveWasPass, g.rng);
+                                   out.values[b], rootLegalActions(g.game, cfg.noPassBefore), previousMoveWasPass, g.rng);
                 g.atRoot = false;
             }
         }
@@ -180,6 +180,14 @@ void reduceStats(const std::vector<GameRecord>& records, const std::vector<GameS
 }
 
 } // namespace
+
+std::vector<int> rootLegalActions(const Game& game, int noPassBefore) {
+    std::vector<int> legal = game.legalActions();
+    if (game.moveCount() >= noPassBefore || legal.size() < 2) return legal;
+    const int pass = game.board().passAction();
+    legal.erase(std::remove(legal.begin(), legal.end(), pass), legal.end());
+    return legal;
+}
 
 std::vector<GameRecord> playSelfPlay(const Model& model, const SelfPlayConfig& cfg, int games, uint64_t seed,
                                      int workers, SelfPlayStats* stats) {

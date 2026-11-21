@@ -44,7 +44,12 @@ struct SelfPlayConfig {
     MctsConfig mcts;                   // addNoise true; alpha = dirichletScale / (n*n)
     int boardSize, maxMoves, temperatureMoves; float komi;
     int group = 8;                     // games advanced in lockstep by one worker
+    int noPassBefore = 0;              // searching players may not pass before this move (0 = off)
 };
+
+// The actions a search may choose at the root of `game`: game.legalActions(), minus pass while
+// game.moveCount() < noPassBefore, unless pass is the only legal action.
+std::vector<int> rootLegalActions(const Game& game, int noPassBefore);
 
 struct SelfPlayStats {
     double seconds;          // wall time of the whole call

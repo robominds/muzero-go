@@ -194,7 +194,7 @@ static void test_resume_refuses_arch_change() {
         assert(contains(e.what(), "pass_plane") && contains(e.what(), "architecture key"));
     }
     // Restating an architecture key's value is no change; tunable keys may change.
-    Trainer ok = Trainer::resume(dir, {"filters=8", "simulations=4"});
+    Trainer ok = Trainer::resume(dir, {"filters=8", "simulations=4", "no_pass_before=5"});
     assert(ok.config().simulations == 4);
     std::printf("test_resume_refuses_arch_change passed\n");
 }

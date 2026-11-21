@@ -51,6 +51,7 @@ std::vector<Field> fields(RunConfig& c) {
         {"league_replace_score", Kind::Float, &c.leagueReplaceScore},
         {"league_min_games", Kind::Int, &c.leagueMinGames},
         {"league_value", Kind::Bool, &c.leagueValue},
+        {"no_pass_before", Kind::Int, &c.noPassBefore},
         {"replay_games", Kind::Int, &c.replayGames},
         {"train_steps", Kind::Int, &c.trainSteps},
         {"batch_size", Kind::Int, &c.batchSize},
@@ -229,6 +230,7 @@ void validate(const RunConfig& c) {
     if (c.selfplayGroup < 1) bad("selfplay_group", "must be >= 1");
     if (c.maxMoves < 0) bad("max_moves", "must be >= 0 (0 = 2 * n * n)");
     if (c.sgfPerGeneration < 0) bad("sgf_per_generation", "must be >= 0");
+    if (c.noPassBefore < 0) bad("no_pass_before", "must be >= 0 (0 = off)");
     if (c.leagueSize < 0 || c.leagueSize > 8) bad("league_size", "must be in 0..8 (0 = no league)");
     if (!(c.leagueFraction >= 0 && c.leagueFraction <= 1)) bad("league_fraction", "must be in 0..1");
     if (!(c.leagueReplaceScore >= 0 && c.leagueReplaceScore <= 1)) bad("league_replace_score", "must be in 0..1");
