@@ -522,6 +522,35 @@ static void test_league_no_games() {
     std::printf("test_league_no_games passed\n");
 }
 
+// league_value = false: the league games (added after the self-play games)
+// train no value; self-play games do. It also survives state.bin, and may
+// change on resume.
+static void test_league_value_off() {
+    const std::string dir = freshDir("league_value_off");
+    RunConfig c = leagueConfig();
+    c.leagueValue = false;
+    Trainer t = Trainer::startNew(c, dir);
+    t.runGeneration();
+    assert(t.replay().games() == 8);
+    for (int i = 0; i < 8; ++i) assert(t.replay().game(i).trainValue == (i < 4));
+    Trainer back = Trainer::resume(dir, {});
+    assert(back.replay().games() == 8);
+    for (int i = 0; i < 8; ++i) assert(back.replay().game(i).trainValue == (i < 4));
+    // Switching it on for the next generation only affects the new records.
+    Trainer on = Trainer::resume(dir, {"league_value=true", "generations=2"});
+    on.runGeneration();
+    assert(on.replay().games() == 16);
+    for (int i = 0; i < 4; ++i) assert(on.replay().game(i).trainValue);
+    for (int i = 4; i < 8; ++i) assert(!on.replay().game(i).trainValue);
+    for (int i = 8; i < 16; ++i) assert(on.replay().game(i).trainValue);
+    // With the default, every record trains the value.
+    const std::string dir2 = freshDir("league_value_on");
+    Trainer d = Trainer::startNew(leagueConfig(), dir2);
+    d.runGeneration();
+    for (int i = 0; i < 8; ++i) assert(d.replay().game(i).trainValue);
+    std::printf("test_league_value_off passed\n");
+}
+
 static void test_league_size_fixed_on_resume() {
     const std::string dir = freshDir("league_fixed");
     Trainer::startNew(leagueConfig(), dir);
@@ -646,6 +675,7 @@ int main() {
     test_league_generation();
     test_league_resume_matches_uninterrupted();
     test_league_no_games();
+    test_league_value_off();
     test_league_size_fixed_on_resume();
     test_league_missing_checkpoint();
     test_league_state_versions();

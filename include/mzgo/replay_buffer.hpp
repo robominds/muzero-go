@@ -29,8 +29,8 @@ public:
     // Format: "MZRB", u32 version 2, u32 capacity, u32 game count, then games.
     // Each game: board size, komi, result, T, moves, stones, policies, root
     // values, then (version 2) a u8 flag (0 = empty policy mask, 1 = present)
-    // and, when present, T mask bytes. Version 1 (no flag) still loads, with
-    // empty masks.
+    // and, when present, T mask bytes, then a u8 train-value flag (0 or 1). Version
+    // 1 (neither) still loads, with empty masks and train-value true.
     void save(BinaryWriter&) const;
     // Throws std::runtime_error on bad data, including games whose board
     // size differs from the first game's.

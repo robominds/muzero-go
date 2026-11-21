@@ -161,6 +161,7 @@ replaces it) with `*` after its score (`random 0.7*`);
 - `league_size` (default 0 = off, 0..8): the number of slots; cannot change on resume.
 - `league_fraction` (default 0.5, 0..1): round(`games_per_generation` × this) of each generation's games are league games; games 2k and 2k + 1 play slot k mod `league_size`, the network Black in the first and White in the second.
 - `league_replace_score` (default 0.6, 0..1): the score (a draw counts half) that beats a member.
+- `league_value` (default true): true: league games train the value like self-play games; false: league games give no value targets (policy and reward/dynamics only). May change on resume; it only affects games added afterwards.
 - `league_min_games` (default 20, ≥ 0): the fewest games against a member for its score to count; a config where some slot gets fewer league games a generation than this is rejected (that member could never be replaced).
 
 `league_fraction` counts games, not positions: league games against the

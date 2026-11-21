@@ -44,6 +44,10 @@ struct GameRecord {
     // trained (a league opponent), so position p trains value/reward/dynamics
     // but not the policy. Empty means every move trains the policy.
     std::vector<uint8_t> policyMask;
+    // False: no position of this game trains the value (fillSample zeroes
+    // every value mask); policy, reward and dynamics are unaffected. Set on
+    // league games when league_value is false.
+    bool trainValue = true;
 
     int length() const { return static_cast<int>(moves.size()); }
     int area() const { return boardSize * boardSize; }

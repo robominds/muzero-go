@@ -79,6 +79,17 @@ current network, so those positions enter training.
    the next generation; a generation without a win clears it. Decision 6
    still allows one replacement per generation, among the eligible slots.
 
+11. **Option `league_value` (default true).** A 5×5 test showed the league
+   making the model weaker. One hypothesis: league games train the value
+   toward outcomes against the random bot ("what happens if the opponent
+   plays randomly"), which biases the search. With `league_value = false`
+   league games still train the policy (the learner's moves) and the
+   dynamics/reward, but every value mask of their samples is 0. The flag is
+   stored per game in the replay buffer (format version 2) and set when the
+   league records enter the window, so it may change on resume and only
+   affects games added afterwards. Off by default in the sense that true
+   keeps decision 4 unchanged.
+
 ## Non-goals
 
 - No AlphaStar-style exploiter agents or prioritized opponent sampling.

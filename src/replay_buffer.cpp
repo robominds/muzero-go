@@ -69,6 +69,7 @@ void ReplayBuffer::save(BinaryWriter& w) const {
         w.floats(g.rootValues.data(), g.rootValues.size());
         w.u8(g.policyMask.empty() ? 0 : 1);
         if (!g.policyMask.empty()) w.bytes(g.policyMask.data(), g.policyMask.size());
+        w.u8(g.trainValue ? 1 : 0);
     }
 }
 
@@ -128,6 +129,9 @@ ReplayBuffer ReplayBuffer::load(BinaryReader& r) {
                 g.policyMask.resize(T);
                 r.bytes(g.policyMask.data(), g.policyMask.size());
             }
+            const uint8_t tv = r.u8();
+            if (tv > 1) throw std::runtime_error("replay buffer: bad train-value flag");
+            g.trainValue = tv == 1;
         }
         buf.add(std::move(g));
     }

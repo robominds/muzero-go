@@ -107,6 +107,7 @@ public:
     int generation() const { return generation_; }       // generations completed
     long globalStep() const { return globalStep_; }      // SGD steps completed
     const RunConfig& config() const { return cfg_; }
+    const ReplayBuffer& replay() const { return replay_; }
     const std::vector<LeagueMember>& league() const { return league_; }   // league_size slots
     const std::string& runDir() const { return runDir_; }
     // Where the one-line summary of each generation goes (none by default).

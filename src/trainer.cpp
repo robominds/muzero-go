@@ -408,7 +408,10 @@ void Trainer::runGeneration() {
 
     // 2. Into the replay window: the self-play games, then the league games.
     for (GameRecord& rec : records) replay_.add(std::move(rec));
-    for (GameRecord& rec : leagueRecords) replay_.add(std::move(rec));
+    for (GameRecord& rec : leagueRecords) {
+        if (!cfg_.leagueValue) rec.trainValue = false;
+        replay_.add(std::move(rec));
+    }
 
     // 3. Training. Step s's batch comes from its own seed, so neither the
     // number of threads nor a resume changes which positions it sees.

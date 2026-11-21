@@ -42,6 +42,34 @@ static GameRecord handRecord(int T, float resultForBlack, bool endsWithPasses) {
     return r;
 }
 
+// trainValue false zeroes every value mask and nothing else.
+static void test_train_value_off() {
+    const int K = 3;
+    for (bool passes : {true, false}) {
+        GameRecord on = handRecord(8, 1.0f, passes);
+        GameRecord off = on;
+        off.trainValue = false;
+        assert(on.trainValue);
+        for (int t : {0, 3, 7}) {
+            TrainBatch a, b;
+            a.resize(1, K, numPlanes(2), N * N, A); b.resize(1, K, numPlanes(2), N * N, A);
+            Rng r1(5), r2(5);
+            fillSample(on, t, K, 2, false, 0, r1, a, 0);
+            fillSample(off, t, K, 2, false, 0, r2, b, 0);
+            bool anyOn = false;
+            for (int k = 0; k <= K; ++k) {
+                anyOn = anyOn || a.valueMask[k] != 0.0f;
+                assert(b.valueMask[k] == 0.0f);
+            }
+            assert(anyOn);
+            assert(a.policyMask == b.policyMask && a.rewardMask == b.rewardMask);
+            assert(a.policyTargets == b.policyTargets && a.rewardTargets == b.rewardTargets);
+            assert(a.valueTargets == b.valueTargets && a.actions == b.actions);
+        }
+    }
+    std::printf("test_train_value_off ok\n");
+}
+
 static void test_record_from_game() {
     const std::vector<int> mv = {0, 24, 12, 18, 6, 20};
     Game g(N, 0.5f, defaultMaxMoves(N));
@@ -269,5 +297,6 @@ int main() {
     test_ended_by_passes();
     test_policy_mask_in_sample();
     test_empty_policy_mask_unchanged();
+    test_train_value_off();
     return 0;
 }

@@ -159,6 +159,40 @@ static void test_replay_v2_roundtrip_mask() {
     std::printf("test_replay_v2_roundtrip_mask ok\n");
 }
 
+static void test_replay_v2_roundtrip_train_value() {
+    ReplayBuffer buf(4);
+    GameRecord off = rec(4, 1);
+    off.trainValue = false;
+    off.policyMask = {1, 0, 0, 1};
+    GameRecord offNoMask = rec(5, 2);
+    offNoMask.trainValue = false;
+    buf.add(off);
+    buf.add(rec(5, 3));
+    buf.add(offNoMask);
+    std::stringstream ss;
+    { BinaryWriter w(ss); buf.save(w); }
+    BinaryReader r(ss);
+    ReplayBuffer got = ReplayBuffer::load(r);
+    assert(got.games() == 3);
+    assert(!got.game(0).trainValue && got.game(1).trainValue && !got.game(2).trainValue);
+    assert(got.game(0).policyMask == off.policyMask && got.game(2).policyMask.empty());
+    assert(same(got.game(0), off) && same(got.game(1), rec(5, 3)));
+    // A flag byte above 1 is refused.
+    std::string bytes = ss.str();
+    ReplayBuffer one(1);
+    one.add(rec(4, 1));
+    std::stringstream s1;
+    { BinaryWriter w(s1); one.save(w); }
+    std::string raw = s1.str();
+    raw.back() = 2;   // the game's trailing train-value byte
+    std::stringstream bad(raw);
+    BinaryReader rb(bad);
+    bool threw = false;
+    try { ReplayBuffer::load(rb); } catch (const std::runtime_error&) { threw = true; }
+    assert(threw);
+    std::printf("test_replay_v2_roundtrip_train_value ok\n");
+}
+
 // Bytes in the version-1 layout, as the old writer produced them.
 static void test_replay_v1_loads() {
     const GameRecord g1 = rec(4, 1), g2 = rec(6, 2);
@@ -186,6 +220,7 @@ static void test_replay_v1_loads() {
     assert(got.games() == 2);
     assert(same(got.game(0), g1) && same(got.game(1), g2));
     assert(got.game(0).policyMask.empty() && got.game(1).policyMask.empty());
+    assert(got.game(0).trainValue && got.game(1).trainValue);
     std::printf("test_replay_v1_loads ok\n");
 }
 
@@ -195,6 +230,7 @@ int main() {
     test_save_load();
     test_load_refuses_mixed_board_sizes();
     test_replay_v2_roundtrip_mask();
+    test_replay_v2_roundtrip_train_value();
     test_replay_v1_loads();
     return 0;
 }

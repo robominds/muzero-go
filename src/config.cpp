@@ -50,6 +50,7 @@ std::vector<Field> fields(RunConfig& c) {
         {"league_fraction", Kind::Float, &c.leagueFraction},
         {"league_replace_score", Kind::Float, &c.leagueReplaceScore},
         {"league_min_games", Kind::Int, &c.leagueMinGames},
+        {"league_value", Kind::Bool, &c.leagueValue},
         {"replay_games", Kind::Int, &c.replayGames},
         {"train_steps", Kind::Int, &c.trainSteps},
         {"batch_size", Kind::Int, &c.batchSize},

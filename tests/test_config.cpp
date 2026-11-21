@@ -23,7 +23,8 @@ static bool sameConfig(const RunConfig& a, const RunConfig& b) {
            a.arenaSimulations == b.arenaSimulations && a.arenaTemperatureMoves == b.arenaTemperatureMoves &&
            a.rolloutBotSimulations == b.rolloutBotSimulations && a.sgfPerGeneration == b.sgfPerGeneration &&
            a.leagueSize == b.leagueSize && a.leagueFraction == b.leagueFraction &&
-           a.leagueReplaceScore == b.leagueReplaceScore && a.leagueMinGames == b.leagueMinGames;
+           a.leagueReplaceScore == b.leagueReplaceScore && a.leagueMinGames == b.leagueMinGames &&
+           a.leagueValue == b.leagueValue;
 }
 
 static void test_defaults_round_trip() {
@@ -144,6 +145,15 @@ static void test_league_keys() {
     assert(sameConfig(parseConfigString(configToString(c)), c));
     applyOverride(c, "league_fraction=0.75");
     assert(c.leagueFraction == 0.75f);
+    // league_value: default true, parses, round-trips, and is not an architecture key.
+    assert(d.leagueValue && text.find("league_value = true\n") != std::string::npos);
+    RunConfig lv = parseConfigString("league_value = false\n");
+    assert(!lv.leagueValue);
+    assert(configToString(lv).find("league_value = false\n") != std::string::npos);
+    assert(sameConfig(parseConfigString(configToString(lv)), lv));
+    applyOverride(lv, "league_value=true");
+    assert(lv.leagueValue);
+    for (const std::string& k : architectureKeys()) assert(k != "league_value");
     // league_size cannot change on resume (the trainer's check, test_trainer),
     // but it fixes no tensor shape, so it is not an architecture key.
     for (const std::string& k : architectureKeys()) assert(k.compare(0, 7, "league_") != 0);
