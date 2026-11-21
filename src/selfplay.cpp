@@ -217,13 +217,16 @@ std::vector<GameRecord> playLeagueGames(const Model& learner, const std::vector<
     std::vector<GameRecord> records(games);
     std::vector<GameStats> perGame(games);
 
+    for (int o : opponentOf) {
+        assert(o >= 0 && o < static_cast<int>(opponents.size()));
+        (void)o;
+    }
     // Game indices sorted by opponent (stable), cut into groups of at most cfg.group with one opponent each.
     std::vector<int> order(games);
     std::iota(order.begin(), order.end(), 0);
     std::stable_sort(order.begin(), order.end(), [&](int a, int b) { return opponentOf[a] < opponentOf[b]; });
     std::vector<std::vector<int>> groups;
     for (int i : order) {
-        assert(opponentOf[i] >= 0 && opponentOf[i] < static_cast<int>(opponents.size()));
         if (groups.empty() || static_cast<int>(groups.back().size()) == cfg.group ||
             opponentOf[groups.back().front()] != opponentOf[i])
             groups.emplace_back();

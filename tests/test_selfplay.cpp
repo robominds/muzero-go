@@ -272,6 +272,71 @@ static void test_league_network_opponent_used() {
     std::printf("test_league_network_opponent_used passed\n");
 }
 
+// Games against the random bot that the move cap stops keep a full mask with the parity pattern.
+static void test_league_capped_games_masks() {
+    const FakeModel learner = varyingModel();
+    SelfPlayConfig cfg = config(8, 3);
+    cfg.maxMoves = 7;
+    const auto recs = playLeagueGames(learner, {LeagueOpponent{}}, std::vector<int>(5, 0), cfg, 67, 2);
+    assert(recs.size() == 5);
+    int capped = 0;
+    for (int i = 0; i < 5; ++i) {
+        const GameRecord& r = recs[i];
+        const int T = r.length();
+        assert(T >= 1 && T <= cfg.maxMoves && static_cast<int>(r.policyMask.size()) == T);
+        for (int p = 0; p < T; ++p) assert((r.policyMask[p] == 1) == learnerAt(i, p));
+        capped += !r.endedByPasses();
+    }
+    assert(capped >= 1);
+    std::printf("test_league_capped_games_masks passed\n");
+}
+
+// Root hook shared by both sides: prior mass split between the lowest and the
+// highest empty point, whose indices it also writes into hidden[0] and hidden[1]
+// so a recurrent hook at depth 1 can recognize them.
+static void splitPrior(const float* obs, FakeOutput& o) {
+    const int area = kDims.area();
+    int lo = -1, hi = -1;
+    for (int p = 0; p < area; ++p)
+        if (obs[p] == 0.0f && obs[area + p] == 0.0f) { if (lo < 0) lo = p; hi = p; }
+    if (lo < 0) return;
+    o.logits[lo] = o.logits[hi] = 30.0f;
+    o.hidden[0] = (static_cast<float>(lo) + 0.5f) / 32.0f;
+    o.hidden[1] = (static_cast<float>(hi) + 0.5f) / 32.0f;
+}
+// Recurrent hook: reward 1 for the root move to the point stored at hidden[slot].
+static FakeModel::StepHook rewardPoint(int slot) {
+    return [slot](const float* parent, int action, FakeOutput& o) {
+        if (o.depth == 1 && action == static_cast<int>(parent[slot] * 32.0f)) o.reward = 1.0f;
+    };
+}
+
+static void test_league_opponent_recurrent_model_used() {
+    // Same root inference for both: only the dynamics decide between the two points.
+    const FakeModel learner(kDims, 1, splitPrior, rewardPoint(0));    // likes the lowest empty point
+    const FakeModel opponent(kDims, 1, splitPrior, rewardPoint(1));   // likes the highest
+    SelfPlayConfig cfg = config(16, 4);
+    cfg.mcts.addNoise = false;
+    cfg.temperatureMoves = 0;
+    const auto recs = playLeagueGames(learner, {LeagueOpponent{&opponent}}, {0, 0, 0}, cfg, 13, 1);
+    int checked[2] = {0, 0};                 // [learner, opponent]
+    for (int i = 0; i < 3; ++i) {
+        const GameRecord& r = recs[i];
+        Game g(5, r.komi, cfg.maxMoves);
+        for (int t = 0; t < r.length(); ++t) {
+            const bool mine = learnerAt(i, t);
+            const int lo = preferredPoint(g.board(), true), hi = preferredPoint(g.board(), false);
+            if (lo >= 0 && lo != hi && g.isLegal(lo) && g.isLegal(hi)) {
+                assert(r.moves[t] == (mine ? lo : hi));
+                ++checked[mine ? 0 : 1];
+            }
+            g.play(r.moves[t]);
+        }
+    }
+    assert(checked[0] >= 6 && checked[1] >= 6);
+    std::printf("test_league_opponent_recurrent_model_used passed\n");
+}
+
 static void test_league_workers_independent() {
     const FakeModel learner = varyingModel();
     const FakeModel net(kDims, 2, [](const float*, FakeOutput& o) { varyOutput(o.hidden.data(), o); o.value *= -1; },
@@ -306,6 +371,8 @@ int main() {
     test_league_random_bot_never_passes_early();
     test_league_network_opponent_used();
     test_league_workers_independent();
+    test_league_capped_games_masks();
+    test_league_opponent_recurrent_model_used();
     std::printf("test_selfplay: all tests passed\n");
     return 0;
 }
