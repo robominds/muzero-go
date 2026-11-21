@@ -34,7 +34,7 @@ static GameRecord rec(int T, int id) {
 static bool same(const GameRecord& a, const GameRecord& b) {
     return a.boardSize == b.boardSize && a.komi == b.komi && a.moves == b.moves &&
            a.stones == b.stones && a.policies == b.policies && a.rootValues == b.rootValues &&
-           a.resultForBlack == b.resultForBlack;
+           a.resultForBlack == b.resultForBlack && a.policyMask == b.policyMask;
 }
 
 static int argmax0(const TrainBatch& b, int s) {
@@ -143,10 +143,94 @@ static void test_load_refuses_mixed_board_sizes() {
     std::printf("test_load_refuses_mixed_board_sizes ok\n");
 }
 
+static void test_replay_v2_roundtrip_mask() {
+    ReplayBuffer buf(3);
+    GameRecord masked = rec(4, 1);
+    masked.policyMask = {1, 0, 0, 1};
+    buf.add(masked);
+    buf.add(rec(5, 2));
+    std::stringstream ss;
+    { BinaryWriter w(ss); buf.save(w); }
+    BinaryReader r(ss);
+    ReplayBuffer got = ReplayBuffer::load(r);
+    assert(got.games() == 2);
+    assert(got.game(0).policyMask == masked.policyMask && same(got.game(0), masked));
+    assert(got.game(1).policyMask.empty());
+    std::printf("test_replay_v2_roundtrip_mask ok\n");
+}
+
+static void test_replay_v2_roundtrip_train_value() {
+    ReplayBuffer buf(4);
+    GameRecord off = rec(4, 1);
+    off.trainValue = false;
+    off.policyMask = {1, 0, 0, 1};
+    GameRecord offNoMask = rec(5, 2);
+    offNoMask.trainValue = false;
+    buf.add(off);
+    buf.add(rec(5, 3));
+    buf.add(offNoMask);
+    std::stringstream ss;
+    { BinaryWriter w(ss); buf.save(w); }
+    BinaryReader r(ss);
+    ReplayBuffer got = ReplayBuffer::load(r);
+    assert(got.games() == 3);
+    assert(!got.game(0).trainValue && got.game(1).trainValue && !got.game(2).trainValue);
+    assert(got.game(0).policyMask == off.policyMask && got.game(2).policyMask.empty());
+    assert(same(got.game(0), off) && same(got.game(1), rec(5, 3)));
+    // A flag byte above 1 is refused.
+    std::string bytes = ss.str();
+    ReplayBuffer one(1);
+    one.add(rec(4, 1));
+    std::stringstream s1;
+    { BinaryWriter w(s1); one.save(w); }
+    std::string raw = s1.str();
+    raw.back() = 2;   // the game's trailing train-value byte
+    std::stringstream bad(raw);
+    BinaryReader rb(bad);
+    bool threw = false;
+    try { ReplayBuffer::load(rb); } catch (const std::runtime_error&) { threw = true; }
+    assert(threw);
+    std::printf("test_replay_v2_roundtrip_train_value ok\n");
+}
+
+// Bytes in the version-1 layout, as the old writer produced them.
+static void test_replay_v1_loads() {
+    const GameRecord g1 = rec(4, 1), g2 = rec(6, 2);
+    std::stringstream ss;
+    {
+        BinaryWriter w(ss);
+        const char magic[4] = {'M', 'Z', 'R', 'B'};
+        w.bytes(magic, 4);
+        w.u32(1);
+        w.u32(5);
+        w.u32(2);
+        for (const GameRecord* g : {&g1, &g2}) {
+            w.u32(static_cast<uint32_t>(g->boardSize));
+            w.f32(g->komi);
+            w.f32(g->resultForBlack);
+            w.u32(static_cast<uint32_t>(g->length()));
+            for (int m : g->moves) w.i32(m);
+            w.bytes(g->stones.data(), g->stones.size());
+            w.floats(g->policies.data(), g->policies.size());
+            w.floats(g->rootValues.data(), g->rootValues.size());
+        }
+    }
+    BinaryReader r(ss);
+    ReplayBuffer got = ReplayBuffer::load(r);
+    assert(got.games() == 2);
+    assert(same(got.game(0), g1) && same(got.game(1), g2));
+    assert(got.game(0).policyMask.empty() && got.game(1).policyMask.empty());
+    assert(got.game(0).trainValue && got.game(1).trainValue);
+    std::printf("test_replay_v1_loads ok\n");
+}
+
 int main() {
     test_uniform_positions();
     test_capacity();
     test_save_load();
     test_load_refuses_mixed_board_sizes();
+    test_replay_v2_roundtrip_mask();
+    test_replay_v2_roundtrip_train_value();
+    test_replay_v1_loads();
     return 0;
 }

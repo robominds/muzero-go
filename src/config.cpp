@@ -7,6 +7,7 @@
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include "mzgo/league.hpp"
 
 namespace mzgo {
 
@@ -45,6 +46,11 @@ std::vector<Field> fields(RunConfig& c) {
         {"dirichlet_scale", Kind::Float, &c.dirichletScale},
         {"noise_fraction", Kind::Float, &c.noiseFraction},
         {"temperature_moves", Kind::Int, &c.temperatureMoves},
+        {"league_size", Kind::Int, &c.leagueSize},
+        {"league_fraction", Kind::Float, &c.leagueFraction},
+        {"league_replace_score", Kind::Float, &c.leagueReplaceScore},
+        {"league_min_games", Kind::Int, &c.leagueMinGames},
+        {"league_value", Kind::Bool, &c.leagueValue},
         {"replay_games", Kind::Int, &c.replayGames},
         {"train_steps", Kind::Int, &c.trainSteps},
         {"batch_size", Kind::Int, &c.batchSize},
@@ -223,6 +229,20 @@ void validate(const RunConfig& c) {
     if (c.selfplayGroup < 1) bad("selfplay_group", "must be >= 1");
     if (c.maxMoves < 0) bad("max_moves", "must be >= 0 (0 = 2 * n * n)");
     if (c.sgfPerGeneration < 0) bad("sgf_per_generation", "must be >= 0");
+    if (c.leagueSize < 0 || c.leagueSize > 8) bad("league_size", "must be in 0..8 (0 = no league)");
+    if (!(c.leagueFraction >= 0 && c.leagueFraction <= 1)) bad("league_fraction", "must be in 0..1");
+    if (!(c.leagueReplaceScore >= 0 && c.leagueReplaceScore <= 1)) bad("league_replace_score", "must be in 0..1");
+    if (c.leagueMinGames < 0) bad("league_min_games", "must be >= 0");
+    // Settings under which no member could ever be replaced.
+    if (c.leagueSize > 0 && c.gamesPerGeneration >= 1) {
+        const int L = leagueGameCount(c.gamesPerGeneration, c.leagueFraction, c.leagueSize);
+        const int fewest = leagueFewestGames(L, c.leagueSize);
+        if (fewest < c.leagueMinGames)
+            bad("league_min_games", "is " + std::to_string(c.leagueMinGames) + " but a league member gets as few as " +
+                                        std::to_string(fewest) + " of the " + std::to_string(L) +
+                                        " league games a generation (round(games_per_generation * league_fraction) "
+                                        "over league_size slots), so it could never be replaced");
+    }
 }
 
 }  // namespace mzgo

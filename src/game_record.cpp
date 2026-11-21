@@ -67,12 +67,12 @@ void fillSample(const GameRecord& g, int t, int K, int history, bool passPlane, 
         float* pol = batch.policyTargets.data() + slot * A;
         std::fill(pol, pol + A, 0.0f);
         const bool known = ended || p <= T;
-        batch.valueMask[slot] = known ? 1.0f : 0.0f;
+        batch.valueMask[slot] = (known && g.trainValue) ? 1.0f : 0.0f;
         batch.rewardMask[slot] = known ? 1.0f : 0.0f;
         if (p < T) {
             const float* src = g.policies.data() + static_cast<size_t>(p) * A;
             for (int a = 0; a < A; ++a) pol[transformAction(sym, a, n)] = src[a];
-            batch.policyMask[slot] = 1.0f;
+            batch.policyMask[slot] = g.policyTrainedAt(p) ? 1.0f : 0.0f;
             batch.valueTargets[slot] = g.outcomeFor(p);
         } else {
             batch.policyMask[slot] = 0.0f;

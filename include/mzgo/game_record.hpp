@@ -40,6 +40,14 @@ struct GameRecord {
     std::vector<float> policies;      // [T][actions] root visit distribution
     std::vector<float> rootValues;    // [T] root search value, side to move's view
     float resultForBlack = 0;         // +1 / -1 / 0
+    // [T] or empty; 0 at p means the move at p was not chosen by the net being
+    // trained (a league opponent), so position p trains value/reward/dynamics
+    // but not the policy. Empty means every move trains the policy.
+    std::vector<uint8_t> policyMask;
+    // False: no position of this game trains the value (fillSample zeroes
+    // every value mask); policy, reward and dynamics are unaffected. Set on
+    // league games when league_value is false.
+    bool trainValue = true;
 
     int length() const { return static_cast<int>(moves.size()); }
     int area() const { return boardSize * boardSize; }
@@ -47,6 +55,9 @@ struct GameRecord {
     Color toMoveAt(int p) const { return p % 2 == 0 ? Color::Black : Color::White; }
     // Result from the view of the side to move at position p.
     float outcomeFor(int p) const { return p % 2 == 0 ? resultForBlack : -resultForBlack; }
+    bool policyTrainedAt(int p) const {
+        return policyMask.empty() || policyMask[static_cast<size_t>(p)] != 0;
+    }
     // True iff the players ended the game (its last two moves are passes);
     // false for a game the move cap stopped.
     bool endedByPasses() const {

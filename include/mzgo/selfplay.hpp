@@ -19,6 +19,15 @@
 // afterwards). Each game i draws all its randomness, in a fixed order, from
 // its own Rng(deriveSeed(seed, i)), so neither the thread count nor which
 // games share a group changes its random stream.
+//
+// League games (playLeagueGames) pit the network being trained, the learner,
+// against another player: an earlier network, which searches exactly like the
+// learner, or the random-move bot. Only the learner's own moves train the
+// policy (GameRecord::policyMask); the opponent's positions still train
+// value, reward and dynamics. A group then holds games against one opponent,
+// and each step splits its live games by whose turn it is: the learner's
+// searches and the opponent network's are batched separately, each through
+// its own session, and the bot moves at once, drawing from the game's Rng.
 #pragma once
 #include <cstdint>
 #include <memory>
@@ -40,6 +49,7 @@ struct SelfPlayConfig {
 struct SelfPlayStats {
     double seconds;          // wall time of the whole call
     double meanLength;       // moves per game
+    // The search statistics cover the learner's searches only (in self-play, every search).
     double meanDepth;        // SearchResult::meanDepth averaged over all searches
     int maxDepth;            // deepest leaf of any search
     double pastEndFraction;  // SearchResult::pastEndFraction averaged over all searches
@@ -52,6 +62,23 @@ struct SelfPlayStats {
 // Output order = game index; bits independent of `workers` (not of `group`).
 std::vector<GameRecord> playSelfPlay(const Model&, const SelfPlayConfig&, int games, uint64_t seed,
                                      int workers, SelfPlayStats* stats = nullptr);
+
+// A league opponent: a network that plays MuZero search with the self-play
+// settings (noise and temperature as for the learner), or, when model is
+// null, the random-move bot (RandomPlayer).
+struct LeagueOpponent { const Model* model = nullptr; };
+
+// Game i plays the learner against opponents[opponentOf[i]]; the learner is
+// Black when i is even. Every record's policyMask is 1 at the learner's
+// positions and 0 at the opponent's. A bot move records a uniform-zero policy
+// row and root value 0. Same seeding and worker-independence guarantees as
+// playSelfPlay (game i draws from Rng(deriveSeed(seed, i))). Games sharing an
+// opponent are batched in lockstep groups of cfg.group; the learner's and a
+// network opponent's searches are batched separately, each through its own
+// session. All models must agree on dims(), history() and passPlane() (asserted).
+std::vector<GameRecord> playLeagueGames(const Model& learner, const std::vector<LeagueOpponent>& opponents,
+                                        const std::vector<int>& opponentOf, const SelfPlayConfig& cfg,
+                                        uint64_t seed, int workers, SelfPlayStats* stats = nullptr);
 
 // Search player for arena and GTP: no noise, sample ∝ visits for the first `temperatureMoves`
 // moves, then argmax. One session per player instance.

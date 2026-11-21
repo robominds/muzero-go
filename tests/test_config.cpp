@@ -21,7 +21,10 @@ static bool sameConfig(const RunConfig& a, const RunConfig& b) {
            a.symmetryAugment == b.symmetryAugment && a.bnCalibrate == b.bnCalibrate &&
            a.arenaEvery == b.arenaEvery && a.arenaGames == b.arenaGames && a.arenaGap == b.arenaGap &&
            a.arenaSimulations == b.arenaSimulations && a.arenaTemperatureMoves == b.arenaTemperatureMoves &&
-           a.rolloutBotSimulations == b.rolloutBotSimulations && a.sgfPerGeneration == b.sgfPerGeneration;
+           a.rolloutBotSimulations == b.rolloutBotSimulations && a.sgfPerGeneration == b.sgfPerGeneration &&
+           a.leagueSize == b.leagueSize && a.leagueFraction == b.leagueFraction &&
+           a.leagueReplaceScore == b.leagueReplaceScore && a.leagueMinGames == b.leagueMinGames &&
+           a.leagueValue == b.leagueValue;
 }
 
 static void test_defaults_round_trip() {
@@ -106,18 +109,85 @@ static void test_errors() {
     expectThrowsNaming("selfplay_group", "selfplay_group=0", true);
     expectThrowsNaming("max_moves", "max_moves=-1", true);
     expectThrowsNaming("sgf_per_generation", "sgf_per_generation=-1", true);
+    expectThrowsNaming("league_size", "league_size=-1", true);
+    expectThrowsNaming("league_size", "league_size=9", true);
+    expectThrowsNaming("league_size", "league_size=two", false);
+    expectThrowsNaming("league_fraction", "league_fraction=-0.1", true);
+    expectThrowsNaming("league_fraction", "league_fraction=1.5", true);
+    expectThrowsNaming("league_fraction", "league_fraction=nan", true);
+    expectThrowsNaming("league_replace_score", "league_replace_score=-0.5", true);
+    expectThrowsNaming("league_replace_score", "league_replace_score=1.01", true);
+    expectThrowsNaming("league_min_games", "league_min_games=-1", true);
     // Their boundary values are accepted.
     RunConfig edge;
     for (const char* kv : {"train_steps=0", "workers=0", "train_threads=0", "arena_games=0", "arena_every=0",
                            "temperature_moves=0", "max_moves=0", "lr_decay_steps=1", "selfplay_group=1",
-                           "arena_gap=1", "sgf_per_generation=0"})
+                           "arena_gap=1", "sgf_per_generation=0", "league_size=8", "league_fraction=1",
+                           "league_replace_score=0", "league_min_games=0"})
         applyOverride(edge, kv);
     validate(edge);
     std::printf("test_errors passed\n");
 }
 
+// The league keys: defaults, parsing and the round trip.
+static void test_league_keys() {
+    const RunConfig d;
+    assert(d.leagueSize == 0 && d.leagueFraction == 0.5f && d.leagueReplaceScore == 0.6f &&
+           d.leagueMinGames == 20);
+    const std::string text = configToString(d);
+    for (const char* line : {"league_size = 0\n", "league_fraction = 0.5\n", "league_min_games = 20\n"})
+        assert(text.find(line) != std::string::npos);
+    RunConfig c = parseConfigString("league_size = 3\nleague_fraction = 0.25\n"
+                                    "league_replace_score = 0.6\nleague_min_games = 7\n");
+    assert(c.leagueSize == 3 && c.leagueFraction == 0.25f && c.leagueReplaceScore == 0.6f &&
+           c.leagueMinGames == 7);
+    validate(c);
+    assert(sameConfig(parseConfigString(configToString(c)), c));
+    applyOverride(c, "league_fraction=0.75");
+    assert(c.leagueFraction == 0.75f);
+    // league_value: default true, parses, round-trips, and is not an architecture key.
+    assert(d.leagueValue && text.find("league_value = true\n") != std::string::npos);
+    RunConfig lv = parseConfigString("league_value = false\n");
+    assert(!lv.leagueValue);
+    assert(configToString(lv).find("league_value = false\n") != std::string::npos);
+    assert(sameConfig(parseConfigString(configToString(lv)), lv));
+    applyOverride(lv, "league_value=true");
+    assert(lv.leagueValue);
+    for (const std::string& k : architectureKeys()) assert(k != "league_value");
+    // league_size cannot change on resume (the trainer's check, test_trainer),
+    // but it fixes no tensor shape, so it is not an architecture key.
+    for (const std::string& k : architectureKeys()) assert(k.compare(0, 7, "league_") != 0);
+    // Settings under which some member could never be replaced are refused.
+    RunConfig few;
+    few.leagueSize = 3;   // 200 games, fraction 0.5: 100 league games, 34, 34 and 32 per member
+    few.leagueMinGames = 32;
+    validate(few);
+    few.leagueMinGames = 33;
+    try {
+        validate(few);
+        assert(false && "expected std::invalid_argument");
+    } catch (const std::invalid_argument& e) {
+        assert(std::string(e.what()).find("league_min_games") != std::string::npos);
+    }
+    RunConfig tiny;   // 4 games, fraction 0.25: one league game for two slots
+    tiny.gamesPerGeneration = 4; tiny.leagueSize = 2; tiny.leagueFraction = 0.25f; tiny.leagueMinGames = 1;
+    try {
+        validate(tiny);
+        assert(false && "expected std::invalid_argument");
+    } catch (const std::invalid_argument& e) {
+        assert(std::string(e.what()).find("league_min_games") != std::string::npos);
+    }
+    tiny.leagueMinGames = 0;
+    validate(tiny);
+    RunConfig off;   // no league: league_min_games is not checked against the games
+    off.gamesPerGeneration = 1; off.leagueMinGames = 1000;
+    validate(off);
+    std::printf("test_league_keys passed\n");
+}
+
 int main() {
     test_defaults_round_trip();
+    test_league_keys();
     test_presets_parse();
     test_override();
     test_errors();

@@ -1,10 +1,12 @@
 #include "mzgo/trainer.hpp"
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
@@ -12,6 +14,7 @@
 #include "mzgo/checkpoint.hpp"
 #include "mzgo/game.hpp"
 #include "mzgo/game_record.hpp"
+#include "mzgo/league.hpp"
 #include "mzgo/match.hpp"
 #include "mzgo/players.hpp"
 #include "mzgo/rng.hpp"
@@ -29,10 +32,12 @@ using Clock = std::chrono::steady_clock;
 
 // state.bin: magic "MZRS", u32 version, i32 generation, u64 global step, the
 // network (checkpoint.hpp's format), u32 velocity count, per velocity tensor
-// u64 size + floats (params() order), then the replay buffer
-// (ReplayBuffer::save). Nothing may follow.
+// u64 size + floats (params() order), the replay buffer (ReplayBuffer::save),
+// then the league: u32 member count and per slot an i32 generation (-1 = the
+// random bot) and a u8 beaten-last-generation flag. Nothing may follow.
+// Version 1 has no league and loads with an empty one.
 const char kStateMagic[4] = {'M', 'Z', 'R', 'S'};
-constexpr uint32_t kStateVersion = 1;
+constexpr uint32_t kStateVersion = 2;
 
 // Games of random moves whose positions calibrate batch norm (bn_calibrate).
 // A random 5x5 game runs to the move cap or close to it, so even the
@@ -59,14 +64,24 @@ std::string sgfPath(const std::string& runDir, int generation, int index) {
     return runDir + buf;
 }
 
-std::string logHeader(int K) {
+std::string leagueSgfPath(const std::string& runDir, int generation, int index) {
+    char buf[40];
+    std::snprintf(buf, sizeof buf, "/sgf/gen_%04d_league_%d.sgf", generation, index);
+    return runDir + buf;
+}
+
+// With a league (league_size > 0), six league columns follow the others.
+std::string logHeader(int K, bool league) {
     std::string h =
         "generation,seconds_selfplay,seconds_train,games,mean_length,capped_games,mean_depth,max_depth,"
         "past_end_fraction,lr,loss_total";
     for (int k = 0; k <= K; ++k) h += ",policy_k" + std::to_string(k);
     for (int k = 0; k <= K; ++k) h += ",value_k" + std::to_string(k);
     for (int k = 1; k <= K; ++k) h += ",reward_k" + std::to_string(k);
-    return h + ",arena_prev,arena_rollout,arena_random,replay_games,replay_positions";
+    h += ",arena_prev,arena_rollout,arena_random,replay_games,replay_positions";
+    if (league)
+        h += ",league_members,league_scores,league_replaced,league_mean_length,league_capped_games,league_positions";
+    return h;
 }
 
 void appendLine(const std::string& path, const std::string& line) {
@@ -86,13 +101,18 @@ std::string valueOf(const RunConfig& cfg, const std::string& key) {
     return "";
 }
 
-// The SGF of a self-play game; the boards are replayed for the score.
-std::string sgfOf(const GameRecord& rec, int maxMoves, int generation, int index) {
+// The SGF of a self-play or league game; the boards are replayed for the score.
+std::string sgfOf(const GameRecord& rec, int maxMoves, const std::string& comment) {
     Game game(rec.boardSize, rec.komi, maxMoves);
     for (int m : rec.moves) game.play(m);
-    return gameToSgf(rec.boardSize, rec.komi, rec.moves, game.scoreForBlack(),
-                     "mzgo self-play, generation " + std::to_string(generation) + ", game " +
-                         std::to_string(index));
+    return gameToSgf(rec.boardSize, rec.komi, rec.moves, game.scoreForBlack(), comment);
+}
+
+template <typename T, typename F>
+std::string joined(const std::vector<T>& items, const char* sep, F format) {
+    std::string out;
+    for (size_t i = 0; i < items.size(); ++i) out += (i ? sep : "") + format(items[i]);
+    return out;
 }
 
 struct ArenaScores {
@@ -140,13 +160,14 @@ Trainer Trainer::startNew(const RunConfig& cfg, const std::string& runDir) {
                                  " is not empty: resume that run or choose another directory");
     Trainer t(cfg, runDir, MuZeroNetwork(netConfigFrom(cfg), deriveSeed(cfg.seed, 0xA11)));
     if (cfg.bnCalibrate) t.calibrateBatchNorm();
+    t.league_.assign(static_cast<size_t>(cfg.leagueSize), LeagueMember{});   // every slot the random bot
 
     fs::create_directories(runDir + "/checkpoints");
     fs::create_directories(runDir + "/sgf");
     writeFileAtomically(configPath(runDir), configToString(cfg));
     saveNetwork(*t.net_, checkpointPath(runDir, 0));
     t.writeState();
-    writeFileAtomically(logPath(runDir), logHeader(cfg.unrollSteps) + "\n");
+    writeFileAtomically(logPath(runDir), logHeader(cfg.unrollSteps, cfg.leagueSize > 0) + "\n");
     return t;
 }
 
@@ -162,6 +183,12 @@ Trainer Trainer::resume(const std::string& runDir, const std::vector<std::string
             throw std::invalid_argument(key + ": an architecture key cannot change on resume (the run has " +
                                         valueOf(saved, key) + ", the override says " + valueOf(cfg, key) + ")");
     }
+    // Not an architecture key (it fixes no tensor shape), but state.bin and
+    // log.csv's columns depend on it.
+    if (cfg.leagueSize != saved.leagueSize)
+        throw std::invalid_argument("league_size: cannot change on resume (the run has " +
+                                    std::to_string(saved.leagueSize) + ", the override says " +
+                                    std::to_string(cfg.leagueSize) + ")");
     validate(cfg);
 
     // Everything is read before the Trainer is built, so any error below is
@@ -174,12 +201,14 @@ Trainer Trainer::resume(const std::string& runDir, const std::vector<std::string
     std::unique_ptr<MuZeroNetwork> net;
     std::vector<std::vector<float>> velocity;
     std::unique_ptr<ReplayBuffer> replay;
+    std::vector<LeagueMember> league;
     try {
         char magic[4];
         r.bytes(magic, 4);
         if (!std::equal(magic, magic + 4, kStateMagic)) throw std::runtime_error("not an MZRS run state");
         const uint32_t version = r.u32();
-        if (version != kStateVersion) throw std::runtime_error("unsupported version " + std::to_string(version));
+        if (version < 1 || version > kStateVersion)
+            throw std::runtime_error("unsupported version " + std::to_string(version));
         generation = r.i32();
         step = r.u64();
         if (generation < 0) throw std::runtime_error("negative generation");
@@ -204,13 +233,41 @@ Trainer Trainer::resume(const std::string& runDir, const std::vector<std::string
             throw std::runtime_error("the replay buffer holds games of board size " +
                                      std::to_string(replay->game(0).boardSize) + " but board_size is " +
                                      std::to_string(cfg.boardSize));
+        if (version >= 2) {
+            const uint32_t members = r.u32();
+            if (members > 8) throw std::runtime_error("has a league of " + std::to_string(members) + " members");
+            for (uint32_t i = 0; i < members; ++i) {
+                const int m = r.i32();
+                if (m < -1 || m >= generation)
+                    throw std::runtime_error("league slot " + std::to_string(i) + " holds generation " +
+                                             std::to_string(m) + ", not one before " + std::to_string(generation));
+                const uint8_t beaten = r.u8();
+                if (beaten > 1)
+                    throw std::runtime_error("league slot " + std::to_string(i) + " has a bad beaten flag");
+                league.push_back(LeagueMember{m, beaten == 1});
+            }
+        }
+        if (static_cast<int>(league.size()) != cfg.leagueSize)
+            throw std::runtime_error("holds a league of " + std::to_string(league.size()) +
+                                     " members but league_size is " + std::to_string(cfg.leagueSize));
         if (in.peek() != std::char_traits<char>::eof()) throw std::runtime_error("unexpected data at the end");
     } catch (const std::runtime_error& e) {
         throw std::runtime_error(path + ": " + e.what());
     }
 
+    // A network member plays from its checkpoint: a missing one would fail
+    // only once its games start, so refuse it now.
+    for (size_t i = 0; i < league.size(); ++i) {
+        if (league[i].isRandom()) continue;
+        const std::string member = checkpointPath(runDir, league[i].generation);
+        if (!fs::exists(member))
+            throw std::runtime_error("league slot " + std::to_string(i) + " is " + league[i].name() + " but " +
+                                     member + " is missing");
+    }
+
     Trainer t(cfg, runDir, std::move(*net));
     t.generation_ = generation;
+    t.league_ = std::move(league);
     t.globalStep_ = static_cast<long>(step);
     t.optimizer_.velocity() = std::move(velocity);
     // Re-adding the games in order rebuilds the same window, and applies a
@@ -270,6 +327,11 @@ void Trainer::writeState() const {
         w.floats(v.data(), v.size());
     }
     replay_.save(w);
+    w.u32(static_cast<uint32_t>(league_.size()));
+    for (const LeagueMember& m : league_) {
+        w.i32(m.generation);
+        w.u8(m.beatenLastGeneration ? 1 : 0);
+    }
     writeFileAtomically(statePath(runDir_), buffer.str());
 }
 
@@ -289,18 +351,67 @@ void Trainer::runGeneration() {
     sp.temperatureMoves = cfg_.temperatureMoves;
     sp.komi = cfg_.komi;
     sp.group = cfg_.selfplayGroup;
-    SelfPlayStats stats{};
-    std::vector<GameRecord> records;
+    // With a league, the last L games are league games: games 2k and 2k + 1
+    // play the member in slot k mod league_size, the learner Black in the
+    // first, White in the second; each network member is loaded once.
+    const bool hasLeague = cfg_.leagueSize > 0;
+    assert(static_cast<int>(league_.size()) == cfg_.leagueSize);
+    const int leagueGames = leagueGameCount(cfg_.gamesPerGeneration, cfg_.leagueFraction, cfg_.leagueSize);
+    const int selfPlayGames = cfg_.gamesPerGeneration - leagueGames;
+    const std::vector<int> opponentOf = leagueOpponents(leagueGames, cfg_.leagueSize);
+    // log.csv's self-play columns (mean length, capped games, search
+    // statistics) stay the self-play games' alone, so a league run reads like
+    // any other; the league games get columns of their own. seconds covers both.
+    SelfPlayStats stats{}, leagueStats{};
+    std::vector<GameRecord> records, leagueRecords;
     {
         const NetworkModel model(*net_, *backend_);
-        records = playSelfPlay(model, sp, cfg_.gamesPerGeneration, deriveSeed(cfg_.seed, g, 1), workers, &stats);
+        if (selfPlayGames > 0)
+            records = playSelfPlay(model, sp, selfPlayGames, deriveSeed(cfg_.seed, g, 1), workers, &stats);
+        if (leagueGames > 0) {
+            std::map<int, std::unique_ptr<MuZeroNetwork>> nets;
+            std::map<int, std::unique_ptr<NetworkModel>> models;
+            std::vector<LeagueOpponent> opponents;
+            for (const LeagueMember& m : league_) {
+                if (m.isRandom()) {
+                    opponents.push_back(LeagueOpponent{});
+                    continue;
+                }
+                if (!models.count(m.generation)) {
+                    const std::string path = checkpointPath(runDir_, m.generation);
+                    auto net = std::make_unique<MuZeroNetwork>(loadNetwork(path));
+                    if (net->config() != net_->config())
+                        throw std::runtime_error(path + ": league member's network shape does not match the run's");
+                    models[m.generation] = std::make_unique<NetworkModel>(*net, *backend_);
+                    nets[m.generation] = std::move(net);
+                }
+                opponents.push_back(LeagueOpponent{models[m.generation].get()});
+            }
+            leagueRecords = playLeagueGames(model, opponents, opponentOf, sp, deriveSeed(cfg_.seed, g, 4), workers,
+                                            &leagueStats);
+        }
+        stats.seconds += leagueStats.seconds;
     }
-    std::vector<std::string> sgfs;
+    std::vector<std::string> sgfs, leagueSgfs;
     for (int i = 0; i < std::min(cfg_.sgfPerGeneration, static_cast<int>(records.size())); ++i)
-        sgfs.push_back(sgfOf(records[i], maxMoves, g, i));
+        sgfs.push_back(sgfOf(records[i], maxMoves,
+                             "mzgo self-play, generation " + std::to_string(g) + ", game " + std::to_string(i)));
+    for (int i = 0; i < std::min(cfg_.sgfPerGeneration, leagueGames); ++i)
+        leagueSgfs.push_back(sgfOf(leagueRecords[i], maxMoves,
+                                   "mzgo league, generation " + std::to_string(g) + ", game " + std::to_string(i) +
+                                       ": gen_" + std::to_string(g - 1) + " (training) as " +
+                                       (i % 2 == 0 ? "Black" : "White") + " vs " +
+                                       league_[opponentOf[i]].name()));
+    const std::vector<LeagueResult> results = leagueResults(leagueRecords, opponentOf, cfg_.leagueSize);
+    long leaguePositions = 0;
+    for (const GameRecord& rec : leagueRecords) leaguePositions += rec.length();
 
-    // 2. Into the replay window.
+    // 2. Into the replay window: the self-play games, then the league games.
     for (GameRecord& rec : records) replay_.add(std::move(rec));
+    for (GameRecord& rec : leagueRecords) {
+        if (!cfg_.leagueValue) rec.trainValue = false;
+        replay_.add(std::move(rec));
+    }
 
     // 3. Training. Step s's batch comes from its own seed, so neither the
     // number of threads nor a resume changes which positions it sees.
@@ -344,6 +455,14 @@ void Trainer::runGeneration() {
                                      std::to_string(cfg_.trainSteps));
     }
 
+    // The league: the network that played (generation g - 1's) replaces the
+    // most clearly beaten eligible member (a random one needs a second win in
+    // a row), at most one per generation; every slot's strike is updated. A
+    // generation without league games beats nobody, so it clears the strikes.
+    const std::vector<LeagueMember> leagueBefore = league_;
+    const int replacedSlot =
+        hasLeague ? advanceLeague(league_, results, cfg_.leagueReplaceScore, cfg_.leagueMinGames, g - 1) : -1;
+
     // 4. Checkpoint, then state.bin: from here on the generation is done
     // and a resume continues with g + 1. A crash after this point (in the
     // arena, say) loses only the generation's log row and summary line.
@@ -351,6 +470,8 @@ void Trainer::runGeneration() {
     generation_ = g;
     writeState();
     for (size_t i = 0; i < sgfs.size(); ++i) writeFileAtomically(sgfPath(runDir_, g, static_cast<int>(i)), sgfs[i]);
+    for (size_t i = 0; i < leagueSgfs.size(); ++i)
+        writeFileAtomically(leagueSgfPath(runDir_, g, static_cast<int>(i)), leagueSgfs[i]);
 
     // 5. Arena: no noise, the first arena_temperature_moves moves sampled.
     ArenaScores arena;
@@ -393,15 +514,37 @@ void Trainer::runGeneration() {
     for (int k = 1; k <= K; ++k) row += "," + mean(sum.reward[k]);
     for (double s : {arena.prev, arena.rollout, arena.random}) row += "," + (arena.ran ? num(s) : std::string());
     row += "," + std::to_string(replay_.games()) + "," + std::to_string(replay_.positions());
+    if (hasLeague) {
+        // The members as they were during the generation, each next to its
+        // score; the new member shows in the next row.
+        row += "," + joined(leagueBefore, ";", [](const LeagueMember& m) { return m.name(); });
+        row += "," + joined(results, ";", [](const LeagueResult& r) { return r.games > 0 ? num(r.score()) : ""; });
+        row += "," + std::to_string(replacedSlot);
+        row += "," + (leagueGames > 0 ? num(leagueStats.meanLength) : std::string());
+        row += "," + std::to_string(leagueStats.cappedGames) + "," + std::to_string(leaguePositions);
+    }
     appendLine(logPath(runDir_), row);
 
     if (log_) {
-        *log_ << "gen " << g << ": selfplay " << num(stats.seconds) << "s (" << cfg_.gamesPerGeneration
+        *log_ << "gen " << g << ": selfplay " << num(stats.seconds) << "s (" << selfPlayGames
               << " games, mean length " << num(stats.meanLength) << "), train " << num(secondsTrain) << "s ("
               << steps << " steps, loss " << (steps > 0 ? mean(sum.total) : "-") << ", lr " << num(firstLr) << ")";
         if (arena.ran)
             *log_ << ", arena vs gen " << std::max(0, g - cfg_.arenaGap) << " " << num(arena.prev) << ", rollout "
                   << num(arena.rollout) << ", random " << num(arena.random);
+        if (hasLeague) {
+            *log_ << ", league (" << leagueGames << " games";
+            if (leagueGames > 0) *log_ << ", mean length " << num(leagueStats.meanLength);
+            *log_ << ") ";
+            for (size_t i = 0; i < leagueBefore.size(); ++i)
+                // '*': a random member's strike (beaten, not replaced); one
+                // more win in a row replaces it.
+                *log_ << (i ? " | " : "") << leagueBefore[i].name() << " "
+                      << (results[i].games > 0 ? num(results[i].score()) : "-")
+                      << (league_[i].isRandom() && league_[i].beatenLastGeneration ? "*" : "");
+            if (replacedSlot >= 0)
+                *log_ << ", slot " << replacedSlot << " -> " << league_[static_cast<size_t>(replacedSlot)].name();
+        }
         *log_ << std::endl;
     }
 }

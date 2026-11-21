@@ -29,6 +29,9 @@ struct RunConfig {
     // search / self-play
     int gamesPerGeneration = 200, simulations = 200, selfplayGroup = 8;
     float dirichletScale = 10, noiseFraction = 0.25f; int temperatureMoves = 8;
+    // league (league.hpp; league_size 0 = off). league_size cannot change on resume.
+    int leagueSize = 0; float leagueFraction = 0.5f, leagueReplaceScore = 0.6f; int leagueMinGames = 20;
+    bool leagueValue = true;   // false: league games give no value targets; may change on resume
     // training
     int replayGames = 2000, trainSteps = 200, batchSize = 128, unrollSteps = 5;
     float lrInit = 0.02f, lrDecayRate = 0.1f; int lrDecaySteps = 12000;
