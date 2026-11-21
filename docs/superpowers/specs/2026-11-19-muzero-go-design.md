@@ -320,6 +320,11 @@ Config: a `key = value` preset file plus `--set key=value` overrides; the
 architecture keys (`unroll_steps` among them, for the per-step batch norm
 statistics) cannot change on resume.
 
+Added later, off by default: league play (`league_size` > 0), where part
+of each generation's games are played against a league of earlier networks
+and the random bot, designed in
+[`2026-11-20-league-design.md`](2026-11-20-league-design.md).
+
 ### When the paper's version fails
 
 The paper's version is always the default (where the paper contradicts

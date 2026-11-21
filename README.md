@@ -117,16 +117,16 @@ the real rules) and the random bot. A run directory holds:
 | file | contents |
 |---|---|
 | `config.cfg` | the resolved config, every key |
-| `log.csv` | one row per generation: self-play seconds, mean game length, `capped_games` (stopped by the 2n² move cap; their targets are truncated, not ended), search `mean_depth` / `max_depth`, `past_end_fraction` (simulations whose imagined path goes on beyond two passes in a row), lr, the loss per unroll step (`policy_k0..K`, `value_k0..K`, `reward_k1..K`), the arena scores, the replay window's size |
+| `log.csv` | one row per generation: self-play seconds, mean game length, `capped_games` (stopped by the 2n² move cap; their targets are truncated, not ended), search `mean_depth` / `max_depth`, `past_end_fraction` (simulations whose imagined path goes on beyond two passes in a row), lr, the loss per unroll step (`policy_k0..K`, `value_k0..K`, `reward_k1..K`), the arena scores, the replay window's size; with a league also `league_members`, `league_scores`, `league_replaced` (below) |
 | `checkpoints/gen_GGGG.mzn` | the network after generation G (`gen_0000` is the starting one); format version 3, with batch norm statistics per unroll step and the pass plane flag (version 2 files still load) |
-| `sgf/gen_GGGG_I.sgf` | the first `sgf_per_generation` self-play games of each generation |
-| `state.bin` | what a resume needs: generation, step, network, optimizer velocity, replay window |
+| `sgf/gen_GGGG_I.sgf` | the first `sgf_per_generation` self-play games of each generation (and `gen_GGGG_league_I.sgf`, as many league games) |
+| `state.bin` | what a resume needs: generation, step, network, optimizer velocity, replay window, league (format version 2; version 1 files still load) |
 
 A new run refuses a non-empty directory. `--resume` continues from
 `state.bin`; overrides may change any key except the architecture keys
 (`board_size`, `history`, `repr_blocks`, `dyn_blocks`, `filters`,
 `value_hidden`, `reward_head`, `pass_plane`, `unroll_steps`: batch norm keeps running
-statistics per unroll step, so K is part of the network). To go on past the
+statistics per unroll step, so K is part of the network) and `league_size`. To go on past the
 config's last generation: `--resume DIR --set generations=200`. Every random
 choice is derived from (seed, generation, phase, step), so a resumed run
 writes exactly the checkpoints and `state.bin` an uninterrupted one would,
@@ -143,6 +143,27 @@ step's set, from one K-step pass over random-move positions),
 `symmetry_augment` (one random board symmetry per unroll), `pass_plane` (off
 by default (paper input); on adds a plane marking that the last move was a
 pass, so the input has 2·history + 3 planes; an architecture key).
+
+League play (off by default; the design is
+[`docs/superpowers/specs/2026-11-20-league-design.md`](docs/superpowers/specs/2026-11-20-league-design.md))
+plays part of each generation's games against a league of opponent slots,
+all held by the random bot at first. Only the network's own moves in those
+games train the policy; every position trains value, reward and dynamics.
+When the network scores well enough against a member, the network that
+played (generation g − 1's during generation g) takes its slot, at most one
+slot per generation. The keys:
+
+- `league_size` (default 0 = off, 0..8): the number of slots; cannot change on resume.
+- `league_fraction` (default 0.5, 0..1): round(`games_per_generation` × this) of each generation's games are league games, game j against slot j mod `league_size`.
+- `league_replace_score` (default 0.55, 0..1): the score (a draw counts half) that beats a member.
+- `league_min_games` (default 20, ≥ 0): the fewest games against a member for its score to count.
+
+`log.csv` then has three more columns: `league_members` (the slots after
+the generation's replacement, `random` or `gen_N`, `;`-joined),
+`league_scores` (the network's score against each slot that generation,
+empty for a slot without games) and `league_replaced` (the slot, or −1).
+The rollout bot is never a member, so `arena_rollout` stays a held-out
+measure; `arena_random` no longer is once the league plays the random bot.
 
 Checkpoints and `state.bin` files written before batch norm kept its
 statistics per unroll step (checkpoint format version 1) cannot be loaded
@@ -321,6 +342,7 @@ include/mzgo/        headers; each starts with a short explanation of its concep
   selfplay           lockstep self-play across games; MuZeroPlayer
   game_record, replay_buffer, train_batch   stored games, the replay window, K-step targets
   trainer, config, checkpoint               the generation loop, run config, network files
+  league             league play: members, results, which slot to replace
   players, match, player_spec               random and rollout-MCTS bots, matches, player specs
   probes             latent, rules and board probes; analyze
   gtp                the GTP engine
