@@ -219,6 +219,46 @@ static void test_ended_by_passes() {
     std::printf("test_ended_by_passes ok\n");
 }
 
+static void test_policy_mask_in_sample() {
+    GameRecord g = handRecord(8, 1.0f, true);
+    GameRecord plain = g;
+    g.policyMask = {1, 0, 1, 0, 1, 1, 1, 1};
+    assert(g.policyTrainedAt(0) && !g.policyTrainedAt(1) && g.policyTrainedAt(2));
+    const int K = 3, hist = 2;
+    TrainBatch a, b;
+    a.resize(1, K, numPlanes(hist, false), N * N, A);
+    b.resize(1, K, numPlanes(hist, false), N * N, A);
+    Rng r1(3), r2(3);
+    fillSample(g, 0, K, hist, false, 0, r1, a, 0);
+    fillSample(plain, 0, K, hist, false, 0, r2, b, 0);
+    const float want[4] = {1, 0, 1, 0};
+    for (int k = 0; k <= K; ++k) assert(a.policyMask[k] == want[k]);
+    assert(a.valueTargets == b.valueTargets && a.rewardTargets == b.rewardTargets &&
+           a.valueMask == b.valueMask && a.rewardMask == b.rewardMask &&
+           a.observations == b.observations && a.actions == b.actions);
+    std::printf("test_policy_mask_in_sample ok\n");
+}
+
+static void test_empty_policy_mask_unchanged() {
+    for (int t = 0; t < 6; ++t) {
+        GameRecord g = handRecord(6, -1.0f, true);
+        GameRecord ones = g;
+        ones.policyMask.assign(6, 1);
+        assert(g.policyMask.empty());
+        const int K = 4, hist = 2;
+        TrainBatch a, b;
+        a.resize(1, K, numPlanes(hist, false), N * N, A);
+        b.resize(1, K, numPlanes(hist, false), N * N, A);
+        Rng r1(5), r2(5);
+        fillSample(g, t, K, hist, false, 0, r1, a, 0);
+        fillSample(ones, t, K, hist, false, 0, r2, b, 0);
+        assert(a.policyMask == b.policyMask && a.policyTargets == b.policyTargets &&
+               a.valueTargets == b.valueTargets && a.rewardTargets == b.rewardTargets &&
+               a.actions == b.actions && a.observations == b.observations);
+    }
+    std::printf("test_empty_policy_mask_unchanged ok\n");
+}
+
 int main() {
     test_record_from_game();
     test_record_pass_plane();
@@ -227,5 +267,7 @@ int main() {
     test_symmetry_consistency();
     test_capped_game_truncated();
     test_ended_by_passes();
+    test_policy_mask_in_sample();
+    test_empty_policy_mask_unchanged();
     return 0;
 }

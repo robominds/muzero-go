@@ -26,7 +26,11 @@ public:
     // consumed in a fixed order: position, symmetry, then padding actions.
     void sampleBatch(int B, int K, int history, bool passPlane, bool augment, Rng& rng, TrainBatch& out) const;
 
-    // Format: "MZRB", u32 version 1, u32 capacity, u32 game count, then games.
+    // Format: "MZRB", u32 version 2, u32 capacity, u32 game count, then games.
+    // Each game: board size, komi, result, T, moves, stones, policies, root
+    // values, then (version 2) a u8 flag (0 = empty policy mask, 1 = present)
+    // and, when present, T mask bytes. Version 1 (no flag) still loads, with
+    // empty masks.
     void save(BinaryWriter&) const;
     // Throws std::runtime_error on bad data, including games whose board
     // size differs from the first game's.

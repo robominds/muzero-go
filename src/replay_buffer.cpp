@@ -49,7 +49,7 @@ void ReplayBuffer::sampleBatch(int B, int K, int history, bool passPlane, bool a
 }
 
 static const char kMagic[4] = {'M', 'Z', 'R', 'B'};
-static const uint32_t kVersion = 1;
+static const uint32_t kVersion = 2;
 static const uint32_t kMaxMoves = 1u << 20;   // sanity bound against corrupt lengths
 
 void ReplayBuffer::save(BinaryWriter& w) const {
@@ -66,6 +66,8 @@ void ReplayBuffer::save(BinaryWriter& w) const {
         w.bytes(g.stones.data(), g.stones.size());
         w.floats(g.policies.data(), g.policies.size());
         w.floats(g.rootValues.data(), g.rootValues.size());
+        w.u8(g.policyMask.empty() ? 0 : 1);
+        if (!g.policyMask.empty()) w.bytes(g.policyMask.data(), g.policyMask.size());
     }
 }
 
@@ -73,7 +75,8 @@ ReplayBuffer ReplayBuffer::load(BinaryReader& r) {
     char magic[4];
     r.bytes(magic, 4);
     if (!std::equal(magic, magic + 4, kMagic)) throw std::runtime_error("replay buffer: bad magic");
-    if (r.u32() != kVersion) throw std::runtime_error("replay buffer: unsupported version");
+    const uint32_t version = r.u32();
+    if (version != 1 && version != kVersion) throw std::runtime_error("replay buffer: unsupported version");
     const uint32_t capacity = r.u32();
     const uint32_t count = r.u32();
     if (capacity == 0 || capacity > static_cast<uint32_t>(std::numeric_limits<int>::max()) ||
@@ -117,6 +120,14 @@ ReplayBuffer ReplayBuffer::load(BinaryReader& r) {
         r.floats(g.policies.data(), g.policies.size());
         g.rootValues.resize(T);
         r.floats(g.rootValues.data(), g.rootValues.size());
+        if (version >= 2) {
+            const uint8_t flag = r.u8();
+            if (flag > 1) throw std::runtime_error("replay buffer: bad policy mask flag");
+            if (flag == 1) {
+                g.policyMask.resize(T);
+                r.bytes(g.policyMask.data(), g.policyMask.size());
+            }
+        }
         buf.add(std::move(g));
     }
     return buf;
