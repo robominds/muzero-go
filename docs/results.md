@@ -1338,17 +1338,77 @@ standard errors from a single training seed, so it may be noise. If it is
 real, the likely cause is narrow self-play (too little exploration), not
 passes.
 
-## 9×9: `9x9-pp-s1`
+## 9×9: `9x9-pp-s1` (stopped at generation 56)
 
 `runs/9x9-pp-s1` is the 9×9 preset with only `pass_plane = true` added,
-started on 2026-11-20 as
+started as
 
 ```
 ./build/mzgo_train --config configs/9x9.cfg --run runs/9x9-pp-s1 --set pass_plane=true --set workers=6 --set train_threads=6
 ```
 
-Its results will be reported here. If it still loses to the random bot,
-the next experiment is more exploration in self-play.
+The plane did its job: `reward_k1` fell to the level of the deeper reward
+losses (about 0.003). The run still stalled like `9x9-s1`. Over generations
+41–53 it averaged 0.02 against the random bot (`9x9-s1`: 0.07; 20 games
+each) and 0.06 against `rollout:200`. Self-play games first collapsed to
+13–20 moves (generations 5–20, nearly all White wins by komi after a
+pass-pass ending), then recovered to 40–60 moves, the same path the
+earlier run took. It was stopped at generation 56. So the pass blind spot
+was real but is not what keeps 9×9 from beating the random bot.
+
+## Runs 6 and 7: league play on 5×5
+
+The random bot never passes and drops stones everywhere, so it leads to
+positions self-play never reaches. League play
+(`docs/superpowers/specs/2026-11-20-league-design.md`) gives part of each
+generation's games to opponents that do not play like the current network.
+The league has `league_size` slots, which all start as the random bot. Half
+the games (`league_fraction = 0.5`) are league games. A member is replaced
+by the network that beat it (score ≥ 0.6 over at least 20 of the
+generation's league games). A random-bot member must be beaten in two
+generations in a row. In league games only the learner's own moves train
+the policy.
+
+Both runs use run 5's config (pass plane on) plus `league_size = 3`.
+Run 7 adds `league_value = false`, so league games give no value targets.
+They still train policy (the learner's moves), reward and dynamics.
+
+| 200 games each (200 simulations, `--temperature-moves 2`, komi 0.5, seed 7) | Run 5 (no league) | Run 6 (league) | Run 7 (league, no value) |
+|---|---|---|---|
+| Generation 40 vs the random bot | 0.79 | 0.695 | **0.865** |
+| Generation 40 vs `rollout:200` | 0.065 | 0.065 | **0.16** |
+| Generation 40 vs run 5's generation 40 | | 0.00 | 0.48 |
+| Generation 40 vs run 6's generation 40 | | | 0.725 |
+| Generation 80 vs the random bot | 0.90 | 0.745 | |
+| Generation 80 vs `rollout:200` | 0.135 | 0.04 | |
+| Generation 80 vs run 5's generation 80 | | 0.055 | |
+
+Run 6 is clearly worse. The likely reason: a league game trains the value
+toward its outcome, and against the random bot that is the outcome against
+a random opponent. The search then uses those values as if the opponent
+played well. Run 7 tests that explanation. With the value targets removed,
+the league matches run 5 head-to-head, and it is better against both bots.
+The gain against `rollout:200`, which the league never plays, is about 3
+standard errors. All three are single seeds.
+
+The two-wins rule for random-bot members filtered out single lucky
+generations about ten times in run 6. Run 6's random slots were all
+replaced by generation 42, run 7's by about generation 22. After that both
+leagues hold recent networks, and a member is replaced every one or two
+generations.
+
+## 9×9: `9x9-lg-s1`
+
+`runs/9x9-lg-s1` is the 9×9 preset with the pass plane and run 7's league
+(`league_size = 3`, `league_value = false`), started on 2026-11-20 as
+
+```
+./build/mzgo_train --config configs/9x9.cfg --run runs/9x9-lg-s1 --set pass_plane=true --set league_size=3 --set league_value=false --set workers=6 --set train_threads=6
+```
+
+Its results will be reported here. If self-play still collapses into short
+games with many passes, the next experiment is forbidding passes early in
+self-play.
 
 An earlier 9×9 run, `runs/9x9-rh-s1`, was started on the pre-fix code and
 stopped after 3 generations. Its checkpoints are format version 1 and no
@@ -1373,6 +1433,10 @@ once a 9×9 run has a checkpoint worth comparing.
   repeated on that code.
 - The optional `pass_plane` input (run 5) was added because of the 9×9
   diagnosis. It is off by default; the 9×9 restart turns it on.
+- League play (runs 6 and 7) is optional and off by default
+  (`league_size = 0`). Run 7's setting, `league_value = false`, is the one to
+  use. The default stays `true`, the plain design, so that runs 6 and 7 can
+  each be reproduced from their configs.
 
 ---
 
