@@ -70,7 +70,7 @@ std::string leagueSgfPath(const std::string& runDir, int generation, int index) 
     return runDir + buf;
 }
 
-// With a league (league_size > 0), three columns follow the others.
+// With a league (league_size > 0), six league columns follow the others.
 std::string logHeader(int K, bool league) {
     std::string h =
         "generation,seconds_selfplay,seconds_train,games,mean_length,capped_games,mean_depth,max_depth,"

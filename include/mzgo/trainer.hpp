@@ -24,8 +24,8 @@
 //      generation, the rollout bot and the random bot;
 //   6. one row of log.csv and one summary line. With a league the summary
 //      ends with each slot's member and score ("-" without games; "*" after
-//      a random member beaten this generation but not replaced, its first
-//      strike) and the replacement, if any ("slot 0 -> gen_14").
+//      a random member beaten this generation but not replaced: one more
+//      win in a row replaces it) and the replacement, if any ("slot 0 -> gen_14").
 //
 // A run lives in one directory:
 //   config.cfg        the resolved config (every key)

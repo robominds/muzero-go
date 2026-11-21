@@ -154,7 +154,8 @@ played (generation g − 1's during generation g) takes its slot, at most one
 slot per generation. A random-bot member must be beaten in two generations
 in a row first (it never comes back once replaced, so one noisy win should
 not remove it); a network member goes after one. The summary line marks a
-random member's first strike with `*` after its score (`random 0.7*`);
+random member that was beaten but not replaced (so one more win in a row
+replaces it) with `*` after its score (`random 0.7*`);
 `state.bin` keeps the strikes, so a resume continues them. The keys:
 
 - `league_size` (default 0 = off, 0..8): the number of slots; cannot change on resume.
