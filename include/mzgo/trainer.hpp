@@ -8,8 +8,9 @@
 //      against itself, each move chosen by MuZero search (selfplay.hpp).
 //      With a league (league_size > 0, league.hpp), the last
 //      L = round(games_per_generation * league_fraction) of them are league
-//      games instead: game j against the member in slot j mod league_size
-//      (seed deriveSeed(seed, g, 4); the self-play games keep theirs);
+//      games instead: games 2k and 2k + 1 against the member in slot
+//      k mod league_size, the learner Black in the first and White in the
+//      second (seed deriveSeed(seed, g, 4); the self-play games keep theirs);
 //   2. the games join the replay window of the last replay_games games
 //      (the self-play games, then the league games);
 //   3. train_steps SGD steps, each on a batch of K-step unrolls sampled
@@ -28,13 +29,18 @@
 //                     of the generation's first step, the losses averaged
 //                     over its steps (empty with train_steps = 0), the
 //                     arena scores of the new network in [0, 1] (empty when
-//                     the arena did not run), the replay window's size; the
-//                     statistics cover league games too. With a league,
-//                     three more: league_members (the slots after this
-//                     generation's replacement, "random" or "gen_N",
-//                     ';'-joined), league_scores (the learner's score
-//                     against each slot's member before it, empty for one
-//                     with no games) and league_replaced (the slot, or -1)
+//                     the arena did not run), the replay window's size. The
+//                     game statistics (mean length, capped games, search
+//                     depth) are the self-play games'; seconds_selfplay
+//                     and games cover the league games too. With a league,
+//                     six more: league_members (the slots during this
+//                     generation, before its replacement, "random" or
+//                     "gen_N", ';'-joined), league_scores (the learner's
+//                     score against each, empty for one with no games),
+//                     league_replaced (the slot, or -1; the new member
+//                     shows in the next row), league_mean_length (empty
+//                     without league games), league_capped_games and
+//                     league_positions (positions the league games added)
 //   checkpoints/      gen_0000.mzn (the starting network), gen_0001.mzn, ...
 //   sgf/              the first sgf_per_generation self-play games of each
 //                     generation, gen_GGGG_I.sgf (I from 0), and as many

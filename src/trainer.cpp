@@ -79,7 +79,8 @@ std::string logHeader(int K, bool league) {
     for (int k = 0; k <= K; ++k) h += ",value_k" + std::to_string(k);
     for (int k = 1; k <= K; ++k) h += ",reward_k" + std::to_string(k);
     h += ",arena_prev,arena_rollout,arena_random,replay_games,replay_positions";
-    if (league) h += ",league_members,league_scores,league_replaced";
+    if (league)
+        h += ",league_members,league_scores,league_replaced,league_mean_length,league_capped_games,league_positions";
     return h;
 }
 
@@ -105,34 +106,6 @@ std::string sgfOf(const GameRecord& rec, int maxMoves, const std::string& commen
     Game game(rec.boardSize, rec.komi, maxMoves);
     for (int m : rec.moves) game.play(m);
     return gameToSgf(rec.boardSize, rec.komi, rec.moves, game.scoreForBlack(), comment);
-}
-
-// The statistics of a generation's self-play and league games together.
-// Game counts weight the mean length; search counts weight the search means
-// (in self-play every move is a search, in a league game the learner's moves,
-// policyMask 1, are). A part without games leaves the other's numbers as they are.
-SelfPlayStats combineStats(const std::vector<GameRecord>& selfPlay, const SelfPlayStats& a,
-                           const std::vector<GameRecord>& league, const SelfPlayStats& b) {
-    if (league.empty()) return a;
-    if (selfPlay.empty()) return b;
-    double moves = 0, searchesA = 0, searchesB = 0;
-    for (const GameRecord& r : selfPlay) {
-        moves += r.length();
-        searchesA += r.length();
-    }
-    for (const GameRecord& r : league) {
-        moves += r.length();
-        for (int p = 0; p < r.length(); ++p) searchesB += r.policyTrainedAt(p);
-    }
-    const double searches = searchesA + searchesB;
-    SelfPlayStats c;
-    c.seconds = a.seconds + b.seconds;
-    c.meanLength = moves / static_cast<double>(selfPlay.size() + league.size());
-    c.meanDepth = searches > 0 ? (a.meanDepth * searchesA + b.meanDepth * searchesB) / searches : 0.0;
-    c.maxDepth = std::max(a.maxDepth, b.maxDepth);
-    c.pastEndFraction = searches > 0 ? (a.pastEndFraction * searchesA + b.pastEndFraction * searchesB) / searches : 0.0;
-    c.cappedGames = a.cappedGames + b.cappedGames;
-    return c;
 }
 
 template <typename T, typename F>
@@ -372,21 +345,23 @@ void Trainer::runGeneration() {
     sp.temperatureMoves = cfg_.temperatureMoves;
     sp.komi = cfg_.komi;
     sp.group = cfg_.selfplayGroup;
-    // With a league, the last L games are league games: game j plays the
-    // member in slot j mod league_size, each network member loaded once.
+    // With a league, the last L games are league games: games 2k and 2k + 1
+    // play the member in slot k mod league_size, the learner Black in the
+    // first, White in the second; each network member is loaded once.
     const bool hasLeague = cfg_.leagueSize > 0;
     assert(static_cast<int>(league_.size()) == cfg_.leagueSize);
     const int leagueGames = leagueGameCount(cfg_.gamesPerGeneration, cfg_.leagueFraction, cfg_.leagueSize);
     const int selfPlayGames = cfg_.gamesPerGeneration - leagueGames;
-    std::vector<int> opponentOf(static_cast<size_t>(leagueGames));
-    for (int j = 0; j < leagueGames; ++j) opponentOf[j] = j % cfg_.leagueSize;
-    SelfPlayStats stats{};
+    const std::vector<int> opponentOf = leagueOpponents(leagueGames, cfg_.leagueSize);
+    // log.csv's self-play columns (mean length, capped games, search
+    // statistics) stay the self-play games' alone, so a league run reads like
+    // any other; the league games get columns of their own. seconds covers both.
+    SelfPlayStats stats{}, leagueStats{};
     std::vector<GameRecord> records, leagueRecords;
     {
         const NetworkModel model(*net_, *backend_);
-        SelfPlayStats selfPlayStats{}, leagueStats{};
         if (selfPlayGames > 0)
-            records = playSelfPlay(model, sp, selfPlayGames, deriveSeed(cfg_.seed, g, 1), workers, &selfPlayStats);
+            records = playSelfPlay(model, sp, selfPlayGames, deriveSeed(cfg_.seed, g, 1), workers, &stats);
         if (leagueGames > 0) {
             std::map<int, std::unique_ptr<MuZeroNetwork>> nets;
             std::map<int, std::unique_ptr<NetworkModel>> models;
@@ -409,7 +384,7 @@ void Trainer::runGeneration() {
             leagueRecords = playLeagueGames(model, opponents, opponentOf, sp, deriveSeed(cfg_.seed, g, 4), workers,
                                             &leagueStats);
         }
-        stats = combineStats(records, selfPlayStats, leagueRecords, leagueStats);
+        stats.seconds += leagueStats.seconds;
     }
     std::vector<std::string> sgfs, leagueSgfs;
     for (int i = 0; i < std::min(cfg_.sgfPerGeneration, static_cast<int>(records.size())); ++i)
@@ -422,6 +397,8 @@ void Trainer::runGeneration() {
                                        (i % 2 == 0 ? "Black" : "White") + " vs " +
                                        league_[opponentOf[i]].name()));
     const std::vector<LeagueResult> results = leagueResults(leagueRecords, opponentOf, cfg_.leagueSize);
+    long leaguePositions = 0;
+    for (const GameRecord& rec : leagueRecords) leaguePositions += rec.length();
 
     // 2. Into the replay window: the self-play games, then the league games.
     for (GameRecord& rec : records) replay_.add(std::move(rec));
@@ -530,21 +507,27 @@ void Trainer::runGeneration() {
     for (double s : {arena.prev, arena.rollout, arena.random}) row += "," + (arena.ran ? num(s) : std::string());
     row += "," + std::to_string(replay_.games()) + "," + std::to_string(replay_.positions());
     if (hasLeague) {
-        row += "," + joined(league_, ";", [](const LeagueMember& m) { return m.name(); });
+        // The members as they were during the generation, each next to its
+        // score; the new member shows in the next row.
+        row += "," + joined(leagueBefore, ";", [](const LeagueMember& m) { return m.name(); });
         row += "," + joined(results, ";", [](const LeagueResult& r) { return r.games > 0 ? num(r.score()) : ""; });
         row += "," + std::to_string(replacedSlot);
+        row += "," + (leagueGames > 0 ? num(leagueStats.meanLength) : std::string());
+        row += "," + std::to_string(leagueStats.cappedGames) + "," + std::to_string(leaguePositions);
     }
     appendLine(logPath(runDir_), row);
 
     if (log_) {
-        *log_ << "gen " << g << ": selfplay " << num(stats.seconds) << "s (" << cfg_.gamesPerGeneration
+        *log_ << "gen " << g << ": selfplay " << num(stats.seconds) << "s (" << selfPlayGames
               << " games, mean length " << num(stats.meanLength) << "), train " << num(secondsTrain) << "s ("
               << steps << " steps, loss " << (steps > 0 ? mean(sum.total) : "-") << ", lr " << num(firstLr) << ")";
         if (arena.ran)
             *log_ << ", arena vs gen " << std::max(0, g - cfg_.arenaGap) << " " << num(arena.prev) << ", rollout "
                   << num(arena.rollout) << ", random " << num(arena.random);
         if (hasLeague) {
-            *log_ << ", league ";
+            *log_ << ", league (" << leagueGames << " games";
+            if (leagueGames > 0) *log_ << ", mean length " << num(leagueStats.meanLength);
+            *log_ << ") ";
             for (size_t i = 0; i < leagueBefore.size(); ++i)
                 *log_ << (i ? " | " : "") << leagueBefore[i].name() << " "
                       << (results[i].games > 0 ? num(results[i].score()) : "-");

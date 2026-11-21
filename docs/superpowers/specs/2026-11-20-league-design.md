@@ -27,9 +27,13 @@ current network, so those positions enter training.
 1. **Off by default.** `league_size = 0` keeps today's behavior, bit for bit.
 2. **Game split.** With `league_size > 0`, L = round(games_per_generation ×
    `league_fraction`) of the generation's games are league games (default
-   fraction 0.5); the rest are ordinary self-play. League game j plays member
-   j mod league_size. The learner takes Black in even league games and White
-   in odd ones.
+   fraction 0.5); the rest are ordinary self-play. League games 2k and 2k + 1
+   play member k mod league_size, the learner taking Black in the first and
+   White in the second, so every member meets the learner in both colours
+   whatever league_size is (an earlier "game j plays member j mod
+   league_size" gave each member one colour only when league_size is even).
+   The fraction counts games, not positions: league games against the random
+   bot run long, so they can be most of the generation's new positions.
 3. **How a member moves.** A random-bot member plays `RandomPlayer`. A network
    member plays MuZero search with the same settings as self-play (noise and
    temperature on), so it is as varied an opponent as the learner.
@@ -43,7 +47,10 @@ current network, so those positions enter training.
    games, so no extra games are played. A member is beaten when the learner
    scored at least `league_replace_score` (default 0.55; a draw counts 0.5)
    over at least `league_min_games` (default 20) games against it. With the
-   presets (200 games, fraction 0.5, 3 slots) each member gets 33 or 34 games.
+   presets (200 games, fraction 0.5, 3 slots) the members get 34, 34 and 32
+   games. Settings under which some member gets fewer than
+   `league_min_games` games a generation are rejected, since that member
+   could never be replaced.
    In conversation this was "0.55 over 40 games" from separate matches; using
    the self-play games instead saves those matches.
 6. **One replacement per generation.** If several members are beaten, only the

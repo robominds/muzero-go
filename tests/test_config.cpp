@@ -147,6 +147,31 @@ static void test_league_keys() {
     // league_size cannot change on resume (the trainer's check, test_trainer),
     // but it fixes no tensor shape, so it is not an architecture key.
     for (const std::string& k : architectureKeys()) assert(k.compare(0, 7, "league_") != 0);
+    // Settings under which some member could never be replaced are refused.
+    RunConfig few;
+    few.leagueSize = 3;   // 200 games, fraction 0.5: 100 league games, 34, 34 and 32 per member
+    few.leagueMinGames = 32;
+    validate(few);
+    few.leagueMinGames = 33;
+    try {
+        validate(few);
+        assert(false && "expected std::invalid_argument");
+    } catch (const std::invalid_argument& e) {
+        assert(std::string(e.what()).find("league_min_games") != std::string::npos);
+    }
+    RunConfig tiny;   // 4 games, fraction 0.25: one league game for two slots
+    tiny.gamesPerGeneration = 4; tiny.leagueSize = 2; tiny.leagueFraction = 0.25f; tiny.leagueMinGames = 1;
+    try {
+        validate(tiny);
+        assert(false && "expected std::invalid_argument");
+    } catch (const std::invalid_argument& e) {
+        assert(std::string(e.what()).find("league_min_games") != std::string::npos);
+    }
+    tiny.leagueMinGames = 0;
+    validate(tiny);
+    RunConfig off;   // no league: league_min_games is not checked against the games
+    off.gamesPerGeneration = 1; off.leagueMinGames = 1000;
+    validate(off);
     std::printf("test_league_keys passed\n");
 }
 

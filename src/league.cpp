@@ -17,6 +17,19 @@ int leagueGameCount(int gamesPerGeneration, float fraction, int size) {
     return static_cast<int>(std::clamp<long>(n, 0, gamesPerGeneration));
 }
 
+std::vector<int> leagueOpponents(int leagueGames, int size) {
+    std::vector<int> opponentOf(static_cast<size_t>(std::max(0, leagueGames)));
+    for (int j = 0; j < leagueGames; ++j) opponentOf[static_cast<size_t>(j)] = (j / 2) % size;
+    return opponentOf;
+}
+
+int leagueFewestGames(int leagueGames, int size) {
+    if (size <= 0) return 0;
+    std::vector<int> games(static_cast<size_t>(size), 0);
+    for (int m : leagueOpponents(leagueGames, size)) ++games[static_cast<size_t>(m)];
+    return *std::min_element(games.begin(), games.end());
+}
+
 std::vector<LeagueResult> leagueResults(const std::vector<GameRecord>& leagueGames,
                                         const std::vector<int>& opponentOf, int members) {
     assert(leagueGames.size() == opponentOf.size());

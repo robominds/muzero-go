@@ -26,6 +26,29 @@ static void test_game_count() {
     std::printf("test_game_count passed\n");
 }
 
+// Every slot meets the learner in both colours (Black in even games), for an
+// odd league size and an even one, and pairs share a slot.
+static void test_opponents() {
+    assert((leagueOpponents(8, 2) == std::vector<int>{0, 0, 1, 1, 0, 0, 1, 1}));
+    assert((leagueOpponents(5, 3) == std::vector<int>{0, 0, 1, 1, 2}));
+    assert(leagueOpponents(0, 2).empty());
+    for (int size : {1, 2, 3, 4}) {
+        const std::vector<int> o = leagueOpponents(4 * size, size);
+        for (int slot = 0; slot < size; ++slot) {
+            bool asBlack = false, asWhite = false;
+            for (size_t j = 0; j < o.size(); ++j)
+                if (o[j] == slot) (j % 2 == 0 ? asBlack : asWhite) = true;
+            assert(asBlack && asWhite);
+        }
+    }
+    assert(leagueFewestGames(100, 3) == 32);   // 50 pairs: 17, 17, 16
+    assert(leagueFewestGames(4, 2) == 2);
+    assert(leagueFewestGames(2, 2) == 0);
+    assert(leagueFewestGames(5, 2) == 2);      // slot 0: 0, 1, 4; slot 1: 2, 3
+    assert(leagueFewestGames(0, 3) == 0 && leagueFewestGames(10, 0) == 0);
+    std::printf("test_opponents passed\n");
+}
+
 static GameRecord withResult(float resultForBlack) {
     GameRecord r;
     r.boardSize = 5;
@@ -76,6 +99,7 @@ static void test_choose_replacement() {
 int main() {
     test_member_names();
     test_game_count();
+    test_opponents();
     test_results();
     test_choose_replacement();
     return 0;

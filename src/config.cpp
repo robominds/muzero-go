@@ -7,6 +7,7 @@
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include "mzgo/league.hpp"
 
 namespace mzgo {
 
@@ -231,6 +232,16 @@ void validate(const RunConfig& c) {
     if (!(c.leagueFraction >= 0 && c.leagueFraction <= 1)) bad("league_fraction", "must be in 0..1");
     if (!(c.leagueReplaceScore >= 0 && c.leagueReplaceScore <= 1)) bad("league_replace_score", "must be in 0..1");
     if (c.leagueMinGames < 0) bad("league_min_games", "must be >= 0");
+    // Settings under which no member could ever be replaced.
+    if (c.leagueSize > 0 && c.gamesPerGeneration >= 1) {
+        const int L = leagueGameCount(c.gamesPerGeneration, c.leagueFraction, c.leagueSize);
+        const int fewest = leagueFewestGames(L, c.leagueSize);
+        if (fewest < c.leagueMinGames)
+            bad("league_min_games", "is " + std::to_string(c.leagueMinGames) + " but a league member gets as few as " +
+                                        std::to_string(fewest) + " of the " + std::to_string(L) +
+                                        " league games a generation (round(games_per_generation * league_fraction) "
+                                        "over league_size slots), so it could never be replaced");
+    }
 }
 
 }  // namespace mzgo

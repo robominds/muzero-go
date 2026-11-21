@@ -4,9 +4,11 @@
 // The league has league_size slots, each held by the random-move bot or by
 // an earlier generation's network. A new run starts with every slot held by
 // the random bot. Each generation, round(games_per_generation *
-// league_fraction) of its games are league games: game j plays the current
-// network (the learner) against the member in slot j mod league_size, the
-// learner taking Black in even games (selfplay.hpp's playLeagueGames). The
+// league_fraction) of its games are league games: games 2k and 2k + 1 play
+// the current network (the learner) against the member in slot
+// k mod league_size, the learner taking Black in the even one and White in
+// the odd one (selfplay.hpp's playLeagueGames), so every member meets both
+// colours whatever league_size is. The
 // games themselves decide who is beaten: a member against whom the learner
 // scored at least league_replace_score (a draw counts half) over at least
 // league_min_games games is beaten, and the most clearly beaten one (one per
@@ -38,6 +40,13 @@ struct LeagueResult {
 // Number of league games this generation: round(gamesPerGeneration * fraction),
 // 0 when size == 0.
 int leagueGameCount(int gamesPerGeneration, float fraction, int size);
+
+// Each league game's slot: opponentOf[j] = (j / 2) % size, so the pair
+// (2k, 2k + 1) plays one member with the learner as Black, then as White.
+std::vector<int> leagueOpponents(int leagueGames, int size);
+
+// The fewest games any slot gets from leagueOpponents (0 when size == 0).
+int leagueFewestGames(int leagueGames, int size);
 
 // Per-member results from league records (learner Black in even games; win 1,
 // draw 0.5, loss 0). opponentOf[i] is game i's member, in 0..members-1.

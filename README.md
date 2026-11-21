@@ -117,7 +117,7 @@ the real rules) and the random bot. A run directory holds:
 | file | contents |
 |---|---|
 | `config.cfg` | the resolved config, every key |
-| `log.csv` | one row per generation: self-play seconds, mean game length, `capped_games` (stopped by the 2n² move cap; their targets are truncated, not ended), search `mean_depth` / `max_depth`, `past_end_fraction` (simulations whose imagined path goes on beyond two passes in a row), lr, the loss per unroll step (`policy_k0..K`, `value_k0..K`, `reward_k1..K`), the arena scores, the replay window's size; with a league also `league_members`, `league_scores`, `league_replaced` (below) |
+| `log.csv` | one row per generation: self-play seconds, mean game length, `capped_games` (stopped by the 2n² move cap; their targets are truncated, not ended), search `mean_depth` / `max_depth`, `past_end_fraction` (simulations whose imagined path goes on beyond two passes in a row), lr, the loss per unroll step (`policy_k0..K`, `value_k0..K`, `reward_k1..K`), the arena scores, the replay window's size; with a league also the league columns (below) |
 | `checkpoints/gen_GGGG.mzn` | the network after generation G (`gen_0000` is the starting one); format version 3, with batch norm statistics per unroll step and the pass plane flag (version 2 files still load) |
 | `sgf/gen_GGGG_I.sgf` | the first `sgf_per_generation` self-play games of each generation (and `gen_GGGG_league_I.sgf`, as many league games) |
 | `state.bin` | what a resume needs: generation, step, network, optimizer velocity, replay window, league (format version 2; version 1 files still load) |
@@ -154,14 +154,25 @@ played (generation g − 1's during generation g) takes its slot, at most one
 slot per generation. The keys:
 
 - `league_size` (default 0 = off, 0..8): the number of slots; cannot change on resume.
-- `league_fraction` (default 0.5, 0..1): round(`games_per_generation` × this) of each generation's games are league games, game j against slot j mod `league_size`.
+- `league_fraction` (default 0.5, 0..1): round(`games_per_generation` × this) of each generation's games are league games; games 2k and 2k + 1 play slot k mod `league_size`, the network Black in the first and White in the second.
 - `league_replace_score` (default 0.55, 0..1): the score (a draw counts half) that beats a member.
-- `league_min_games` (default 20, ≥ 0): the fewest games against a member for its score to count.
+- `league_min_games` (default 20, ≥ 0): the fewest games against a member for its score to count; a config where some slot gets fewer league games a generation than this is rejected (that member could never be replaced).
 
-`log.csv` then has three more columns: `league_members` (the slots after
-the generation's replacement, `random` or `gen_N`, `;`-joined),
-`league_scores` (the network's score against each slot that generation,
-empty for a slot without games) and `league_replaced` (the slot, or −1).
+`league_fraction` counts games, not positions: league games against the
+random bot run long, so they can be most of a generation's new positions
+(`league_positions` below). And since the opponent's positions carry no
+policy target, `policy_k` losses, averaged over every batch slot including
+masked ones, drop as more positions are masked; compare them across runs
+with care.
+
+`log.csv` then has six more columns: `league_members` (the slots during
+the generation, before its replacement, `random` or `gen_N`, `;`-joined),
+`league_scores` (the network's score against each, empty for a slot
+without games), `league_replaced` (the slot, or −1; the new member shows in
+the next row), `league_mean_length`, `league_capped_games` and
+`league_positions` (positions the league games added). `mean_length`,
+`capped_games` and the search columns stay the self-play games' alone, so a
+league run reads like any other; `seconds_selfplay` and `games` cover both.
 The rollout bot is never a member, so `arena_rollout` stays a held-out
 measure; `arena_random` no longer is once the league plays the random bot.
 

@@ -73,6 +73,14 @@ static bool contains(const std::string& haystack, const std::string& needle) {
     return haystack.find(needle) != std::string::npos;
 }
 
+// log.csv's header with K = 5 and no league: the columns of every run before
+// the league, which a league-off run must still write exactly.
+static const std::string kHeaderK5 =
+    "generation,seconds_selfplay,seconds_train,games,mean_length,capped_games,mean_depth,max_depth,"
+    "past_end_fraction,lr,loss_total,policy_k0,policy_k1,policy_k2,policy_k3,policy_k4,policy_k5,"
+    "value_k0,value_k1,value_k2,value_k3,value_k4,value_k5,reward_k1,reward_k2,reward_k3,reward_k4,"
+    "reward_k5,arena_prev,arena_rollout,arena_random,replay_games,replay_positions";
+
 static void test_net_config_from() {
     RunConfig c = tinyConfig();
     c.history = 4; c.rewardHead = true; c.passPlane = true; c.reprBlocks = 2; c.dynBlocks = 3;
@@ -99,11 +107,7 @@ static void test_two_generations() {
 
     const std::vector<std::string> log = lines(readFile(dir + "/log.csv"));
     assert(log.size() == 3);
-    const std::string header =
-        "generation,seconds_selfplay,seconds_train,games,mean_length,capped_games,mean_depth,max_depth,"
-        "past_end_fraction,lr,loss_total,policy_k0,policy_k1,policy_k2,policy_k3,policy_k4,policy_k5,"
-        "value_k0,value_k1,value_k2,value_k3,value_k4,value_k5,reward_k1,reward_k2,reward_k3,reward_k4,"
-        "reward_k5,arena_prev,arena_rollout,arena_random,replay_games,replay_positions";
+    const std::string& header = kHeaderK5;
     assert(log[0] == header);
     const size_t columns = splitCsv(header).size();
     for (int g = 1; g <= 2; ++g) {
@@ -339,20 +343,20 @@ static void test_bn_calibrate() {
 // ---- League play ----------------------------------------------------------
 
 // The tiny run with a league of two random bots, where any score replaces a
-// member: 4 games per generation, 2 of them league games (one per slot).
+// member: 8 games per generation, 4 of them league games (games 0 and 1
+// against slot 0, games 2 and 3 against slot 1).
 static RunConfig leagueConfig() {
     RunConfig c = tinyConfig();
+    c.gamesPerGeneration = 8;
     c.leagueSize = 2;
     c.leagueReplaceScore = 0;
     c.leagueMinGames = 0;
     return c;
 }
 
-static const std::string kTodaysHeader =
-    "generation,seconds_selfplay,seconds_train,games,mean_length,capped_games,mean_depth,max_depth,"
-    "past_end_fraction,lr,loss_total,policy_k0,policy_k1,policy_k2,policy_k3,policy_k4,policy_k5,"
-    "value_k0,value_k1,value_k2,value_k3,value_k4,value_k5,reward_k1,reward_k2,reward_k3,reward_k4,"
-    "reward_k5,arena_prev,arena_rollout,arena_random,replay_games,replay_positions";
+// The league columns follow the others: n - 6 .. n - 1 of a row of n fields.
+enum LeagueColumn { kMembers = 6, kScores = 5, kReplaced = 4, kLeagueMeanLength = 3, kLeagueCapped = 2,
+                    kLeaguePositions = 1, kReplayGames = 8, kReplayPositions = 7 };
 
 static std::vector<std::string> splitOn(const std::string& s, char sep) {
     std::vector<std::string> out;
@@ -382,17 +386,26 @@ static void test_league_generation() {
 
     const std::vector<std::string> log = lines(readFile(dir + "/log.csv"));
     assert(log.size() == 2);
-    assert(log[0] == kTodaysHeader + ",league_members,league_scores,league_replaced");
+    assert(log[0] == kHeaderK5 + ",league_members,league_scores,league_replaced,league_mean_length,"
+                                 "league_capped_games,league_positions");
     const std::vector<std::string> row = splitCsv(log[1]);
     assert(row.size() == splitCsv(log[0]).size());
     const size_t n = row.size();
-    assert(row[n - 3] == league[0].name() + ";" + league[1].name());
-    assert(row[n - 1] == std::to_string(replaced));
-    const std::vector<std::string> scores = splitOn(row[n - 2], ';');
+    assert(row[n - kMembers] == "random;random");   // the members the scores were against
+    assert(row[n - kReplaced] == std::to_string(replaced));
+    const std::vector<std::string> scores = splitOn(row[n - kScores], ';');
     assert(scores.size() == 2);
     for (const std::string& s : scores) assert(!s.empty() && std::stod(s) >= 0 && std::stod(s) <= 1);
-    assert(row[3] == "4");                    // games: all of them, league games included
-    assert(row[n - 5] == "4");                // replay_games: 2 self-play + 2 league
+    assert(row[3] == "8");                         // games: all of them, league games included
+    assert(row[n - kReplayGames] == "8");          // 4 self-play + 4 league
+    // mean_length is the 4 self-play games'; the league games have their own
+    // columns, and together they make up the window's positions.
+    const double selfPlayPositions = 4 * std::stod(row[4]);
+    const double leaguePositions = std::stod(row[n - kLeaguePositions]);
+    assert(std::fabs(4 * std::stod(row[n - kLeagueMeanLength]) - leaguePositions) < 0.01);
+    assert(std::fabs(selfPlayPositions + leaguePositions - std::stod(row[n - kReplayPositions])) < 0.01);
+    const int leagueCapped = std::stoi(row[n - kLeagueCapped]);
+    assert(leagueCapped >= 0 && leagueCapped <= 4);
 
     // The first sgf_per_generation league games are saved too.
     assert(fs::exists(dir + "/sgf/gen_0001_0.sgf") && fs::exists(dir + "/sgf/gen_0001_1.sgf"));
@@ -401,7 +414,9 @@ static void test_league_generation() {
 
     // The summary line names the members and their scores, and the replacement.
     const std::string line = summary.str();
-    assert(contains(line, ", league random " + scores[0] + " | random " + scores[1]));
+    assert(contains(line, ", league (4 games, mean length " + row[n - kLeagueMeanLength] + ") random " + scores[0] +
+                              " | random " + scores[1]));
+    assert(contains(line, "selfplay ") && contains(line, "s (4 games, mean length " + row[4] + ")"));
     assert(contains(line, ", slot " + std::to_string(replaced) + " -> gen_0"));
 
     // state.bin keeps the league.
@@ -444,15 +459,24 @@ static void test_league_resume_matches_uninterrupted() {
             const std::string name = "/sgf/gen_000" + std::to_string(g) + "_league_" + std::to_string(i) + ".sgf";
             assert(readFile(straight + name) == readFile(split + name));
         }
-    // Generations 2 and 3 played a network member (gen 0 was in the league
-    // after generation 1), and each generation replaced one slot.
+    // Each generation replaced one slot, and the next row shows the new
+    // member: generation 2 played gen 0 (in the league after generation 1).
     const std::vector<std::string> log = lines(readFile(straight + "/log.csv"));
     assert(log.size() == 4);
+    std::vector<std::vector<std::string>> rows;
     for (int g = 1; g <= 3; ++g) {
-        const std::vector<std::string> row = splitCsv(log[g]);
-        assert(row.back() == "0" || row.back() == "1");
+        rows.push_back(splitCsv(log[g]));
+        const std::string& replaced = rows.back()[rows.back().size() - kReplaced];
+        assert(replaced == "0" || replaced == "1");
     }
-    assert(contains(splitCsv(log[1])[splitCsv(log[1]).size() - 3], "gen_0"));
+    const size_t n = rows[0].size();
+    assert(rows[0][n - kMembers] == "random;random");
+    for (int g = 2; g <= 3; ++g) {
+        std::vector<std::string> expected = splitOn(rows[g - 2][n - kMembers], ';');
+        expected[std::stoi(rows[g - 2][n - kReplaced])] = "gen_" + std::to_string(g - 2);
+        assert(rows[g - 1][n - kMembers] == expected[0] + ";" + expected[1]);
+    }
+    assert(contains(rows[1][n - kMembers], "gen_0"));
     std::printf("test_league_resume_matches_uninterrupted passed\n");
 }
 
@@ -462,7 +486,7 @@ static void test_league_no_games() {
     const std::string dir = freshDir("league_none");
     RunConfig c = leagueConfig();
     c.generations = 1;
-    c.leagueFraction = 0.1f;   // round(4 * 0.1) = 0
+    c.leagueFraction = 0.05f;   // round(8 * 0.05) = 0
     Trainer t = Trainer::startNew(c, dir);
     t.run();
     assert(t.league()[0].isRandom() && t.league()[1].isRandom());
@@ -470,8 +494,9 @@ static void test_league_no_games() {
     const std::vector<std::string> row = splitCsv(log[1]);
     assert(row.size() == splitCsv(log[0]).size());
     const size_t n = row.size();
-    assert(row[n - 3] == "random;random" && row[n - 2] == ";" && row[n - 1] == "-1");
-    assert(row[n - 5] == "4");
+    assert(row[n - kMembers] == "random;random" && row[n - kScores] == ";" && row[n - kReplaced] == "-1");
+    assert(row[n - kLeagueMeanLength].empty() && row[n - kLeagueCapped] == "0" && row[n - kLeaguePositions] == "0");
+    assert(row[n - kReplayGames] == "8");
     assert(!fs::exists(dir + "/sgf/gen_0001_league_0.sgf"));
     std::printf("test_league_no_games passed\n");
 }
@@ -488,9 +513,9 @@ static void test_league_size_fixed_on_resume() {
         }
     }
     // Restating it is no change; the other league keys may change.
-    Trainer ok = Trainer::resume(dir, {"league_size=2", "league_fraction=0.25", "league_replace_score=0.7",
+    Trainer ok = Trainer::resume(dir, {"league_size=2", "league_fraction=1", "league_replace_score=0.7",
                                        "league_min_games=3"});
-    assert(ok.config().leagueFraction == 0.25f && ok.config().leagueMinGames == 3 && ok.league().size() == 2);
+    assert(ok.config().leagueFraction == 1.0f && ok.config().leagueMinGames == 3 && ok.league().size() == 2);
     std::printf("test_league_size_fixed_on_resume passed\n");
 }
 
@@ -510,30 +535,67 @@ static void test_league_missing_checkpoint() {
     std::printf("test_league_missing_checkpoint passed\n");
 }
 
-// state.bin version 1 (before the league) still loads, with an empty
-// league; a league whose size is not league_size is refused.
+// state.bin version 1 (before the league), whose replay buffer is version 1
+// too (no policy mask flags), still loads, with an empty league, and goes on
+// exactly as the same run's version 2 state does. A league whose size is not
+// league_size is refused.
 static void test_league_state_versions() {
-    const std::string dir = freshDir("league_v1");
-    Trainer::startNew(tinyConfig(), dir);
-    const std::string path = dir + "/state.bin";
+    const std::string dirV1 = freshDir("league_v1"), dirV2 = freshDir("league_v2");
+    RunConfig c = tinyConfig();
+    c.generations = 1;
+    Trainer::startNew(c, dirV1).run();
+    fs::copy(dirV1, dirV2, fs::copy_options::recursive);
+    const std::string path = dirV1 + "/state.bin";
     const std::string v2 = readFile(path);
     assert(v2.compare(0, 4, "MZRS") == 0 && v2[4] == 2);
     assert(v2.compare(v2.size() - 4, 4, std::string(4, '\0')) == 0);   // no members
+    // The replay buffer: the last "MZRB", checked by loading it to the league's start.
+    const size_t replayAt = v2.rfind("MZRB");
+    assert(replayAt != std::string::npos);
+    std::istringstream replayIn(v2.substr(replayAt, v2.size() - 4 - replayAt), std::ios::binary);
+    BinaryReader r(replayIn);
+    const ReplayBuffer replay = ReplayBuffer::load(r);
+    assert(replayIn.peek() == std::char_traits<char>::eof() && replay.games() == 4);
+    // Version 1 of both: no league after the replay buffer, no mask flag per game.
+    std::ostringstream v1(std::ios::binary);
     {
-        std::string v1 = v2.substr(0, v2.size() - 4);
-        v1[4] = 1;
-        std::ofstream out(path, std::ios::binary | std::ios::trunc);
-        out << v1;
+        BinaryWriter w(v1);
+        std::string head = v2.substr(0, replayAt);
+        head[4] = 1;
+        w.bytes(head.data(), head.size());
+        w.bytes("MZRB", 4);
+        w.u32(1);
+        w.bytes(v2.data() + replayAt + 8, 8);   // capacity, game count
+        for (int i = 0; i < replay.games(); ++i) {
+            const GameRecord& g = replay.game(i);
+            assert(g.policyMask.empty());
+            w.u32(static_cast<uint32_t>(g.boardSize));
+            w.f32(g.komi);
+            w.f32(g.resultForBlack);
+            w.u32(static_cast<uint32_t>(g.length()));
+            for (int m : g.moves) w.i32(m);
+            w.bytes(g.stones.data(), g.stones.size());
+            w.floats(g.policies.data(), g.policies.size());
+            w.floats(g.rootValues.data(), g.rootValues.size());
+        }
     }
-    Trainer t = Trainer::resume(dir, {});
-    assert(t.generation() == 0 && t.league().empty());
+    {
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        out << v1.str();
+    }
+    Trainer t = Trainer::resume(dirV1, {"generations=2"});
+    assert(t.generation() == 1 && t.league().empty());
+    t.run();
+    Trainer::resume(dirV2, {"generations=2"}).run();
+    assert(readFile(checkpointPath(dirV1, 2)) == readFile(checkpointPath(dirV2, 2)));
+    assert(readFile(dirV1 + "/state.bin") == readFile(dirV2 + "/state.bin"));   // written as version 2 again
 
     // A run whose config says league_size 2 but whose state.bin holds no league.
     const std::string bad = freshDir("league_mismatch");
     Trainer::startNew(tinyConfig(), bad);
     {
         std::ofstream out(bad + "/config.cfg", std::ios::app);
-        out << "league_size = 2\n";
+        out << "league_size = 2\nleague_min_games = 0\n";
     }
     try {
         Trainer::resume(bad, {});
