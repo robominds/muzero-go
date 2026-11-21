@@ -156,11 +156,156 @@ static void test_muzero_player_legal() {
     std::printf("test_muzero_player_legal passed\n");
 }
 
+// League games against one random-bot opponent (shared by the next two tests).
+static std::vector<GameRecord> leagueVsRandom(SelfPlayStats* stats = nullptr) {
+    const FakeModel learner = varyingModel();
+    return playLeagueGames(learner, {LeagueOpponent{}}, std::vector<int>(6, 0), config(12, 4), 41, 1, stats);
+}
+
+// The learner's turn at position p of game i: Black (even p) in even games.
+static bool learnerAt(int i, int p) { return (p % 2 == 0) == (i % 2 == 0); }
+
+static void test_league_random_opponent_masks() {
+    SelfPlayStats stats;
+    const auto recs = leagueVsRandom(&stats);
+    assert(recs.size() == 6);
+    int capped = 0, totalMoves = 0;
+    for (int i = 0; i < 6; ++i) {
+        const GameRecord& r = recs[i];
+        const int T = r.length();
+        assert(T >= 1 && static_cast<int>(r.policyMask.size()) == T);
+        assert(static_cast<int>(r.policies.size()) == T * kActions && static_cast<int>(r.rootValues.size()) == T);
+        for (int p = 0; p < T; ++p) {
+            assert((r.policyMask[p] == 1) == learnerAt(i, p));
+            assert(r.policyMask[p] == 0 || r.policyMask[p] == 1);
+            const float* pi = r.policies.data() + static_cast<size_t>(p) * kActions;
+            double sum = 0;
+            for (int a = 0; a < kActions; ++a) sum += pi[a];
+            if (learnerAt(i, p)) {
+                assert(std::fabs(sum - 1.0) < 1e-5);
+            } else {
+                assert(sum == 0.0 && r.rootValues[p] == 0.0f);
+            }
+        }
+        capped += !r.endedByPasses();
+        totalMoves += T;
+    }
+    assert(stats.cappedGames == capped);
+    assert(std::fabs(stats.meanLength - totalMoves / 6.0) < 1e-9);
+    assert(stats.maxDepth >= 1 && stats.meanDepth >= 1.0 && stats.meanDepth <= stats.maxDepth);
+    std::printf("test_league_random_opponent_masks passed\n");
+}
+
+static void test_league_random_bot_never_passes_early() {
+    const auto recs = leagueVsRandom();
+    int botMoves = 0, botStones = 0;
+    for (int i = 0; i < 6; ++i) {
+        const GameRecord& r = recs[i];
+        Game g(5, r.komi, defaultMaxMoves(5));
+        for (int t = 0; t < r.length(); ++t) {
+            assert(!g.isTerminal() && g.isLegal(r.moves[t]));
+            if (!learnerAt(i, t)) {
+                ++botMoves;
+                // RandomPlayer's rule: a pass only when every legal non-pass move fills an own eye.
+                bool other = false;
+                for (int a : g.legalActions())
+                    if (a != g.board().passAction() && !fillsOwnEye(g.board(), a)) other = true;
+                if (r.moves[t] == g.board().passAction()) assert(!other);
+                else ++botStones;
+            }
+            g.play(r.moves[t]);
+        }
+        assert(g.isTerminal() && r.resultForBlack == g.resultForBlack());
+    }
+    assert(botMoves > 0 && botStones > 0);
+    std::printf("test_league_random_bot_never_passes_early passed\n");
+}
+
+// A root hook putting (almost) all prior mass on the lowest (or highest) empty point.
+static FakeModel::RootHook preferEmpty(bool lowest) {
+    return [lowest](const float* obs, FakeOutput& o) {
+        const int area = kDims.area();
+        for (int k = 0; k < area; ++k) {
+            const int p = lowest ? k : area - 1 - k;
+            if (obs[p] == 0.0f && obs[area + p] == 0.0f) { o.logits[p] = 30.0f; return; }
+        }
+    };
+}
+static int preferredPoint(const Board& b, bool lowest) {
+    for (int k = 0; k < b.area(); ++k) {
+        const int p = lowest ? k : b.area() - 1 - k;
+        if (b.at(p) == Color::Empty) return p;
+    }
+    return -1;
+}
+
+static void test_league_network_opponent_used() {
+    const FakeModel learner(kDims, 1, preferEmpty(true));
+    const FakeModel opponent(kDims, 1, preferEmpty(false));
+    SelfPlayConfig cfg = config(8, 4);
+    cfg.mcts.addNoise = false;
+    cfg.temperatureMoves = 0;
+    const auto recs = playLeagueGames(learner, {LeagueOpponent{&opponent}}, {0, 0, 0}, cfg, 5, 1);
+    assert(recs.size() == 3);
+    int checked[2] = {0, 0};                 // [learner, opponent] moves at a legal preferred point
+    for (int i = 0; i < 3; ++i) {
+        const GameRecord& r = recs[i];
+        assert(static_cast<int>(r.policyMask.size()) == r.length());
+        Game g(5, r.komi, cfg.maxMoves);
+        for (int t = 0; t < r.length(); ++t) {
+            const bool mine = learnerAt(i, t);
+            assert(r.policyMask[t] == (mine ? 1 : 0));
+            // Both sides' rows are search distributions.
+            const float* pi = r.policies.data() + static_cast<size_t>(t) * kActions;
+            double sum = 0;
+            for (int a = 0; a < kActions; ++a) sum += pi[a];
+            assert(std::fabs(sum - 1.0) < 1e-5 && pi[r.moves[t]] > 0.0f);
+            const int want = preferredPoint(g.board(), mine);
+            if (want >= 0 && g.isLegal(want)) {
+                assert(r.moves[t] == want);
+                ++checked[mine ? 0 : 1];
+            }
+            g.play(r.moves[t]);
+        }
+    }
+    assert(checked[0] >= 6 && checked[1] >= 6);
+    std::printf("test_league_network_opponent_used passed\n");
+}
+
+static void test_league_workers_independent() {
+    const FakeModel learner = varyingModel();
+    const FakeModel net(kDims, 2, [](const float*, FakeOutput& o) { varyOutput(o.hidden.data(), o); o.value *= -1; },
+                        [](const float* parent, int, FakeOutput& o) { varyOutput(parent, o); o.logits[3] += 1.0f; });
+    const std::vector<LeagueOpponent> opponents{LeagueOpponent{}, LeagueOpponent{&net}};
+    const std::vector<int> opponentOf{1, 0, 0, 1, 1, 0, 1, 0, 0, 1};
+    const SelfPlayConfig cfg = config(12, 3);
+    SelfPlayStats s1, s3;
+    const auto one = playLeagueGames(learner, opponents, opponentOf, cfg, 59, 1, &s1);
+    const auto three = playLeagueGames(learner, opponents, opponentOf, cfg, 59, 3, &s3);
+    assert(one.size() == 10 && three.size() == 10);
+    for (int i = 0; i < 10; ++i) assert(sameRecord(one[i], three[i]) && one[i].policyMask == three[i].policyMask);
+    assert(s1.meanLength == s3.meanLength && s1.meanDepth == s3.meanDepth && s1.maxDepth == s3.maxDepth &&
+           s1.pastEndFraction == s3.pastEndFraction && s1.cappedGames == s3.cappedGames);
+    // Against the network opponent, the opponent's rows are search distributions.
+    for (int i = 0; i < 10; ++i) {
+        const float* pi = one[i].policies.data() + static_cast<size_t>(learnerAt(i, 0) ? 1 : 0) * kActions;
+        double sum = 0;
+        for (int a = 0; a < kActions; ++a) sum += pi[a];
+        assert(std::fabs(sum - (opponentOf[i] == 1 ? 1.0 : 0.0)) < 1e-5);
+    }
+    assert(!(one[0].moves == one[3].moves));          // games really differ
+    std::printf("test_league_workers_independent passed\n");
+}
+
 int main() {
     test_selfplay_finishes();
     test_selfplay_workers_independent();
     test_lockstep_equals_sequential();
     test_muzero_player_legal();
+    test_league_random_opponent_masks();
+    test_league_random_bot_never_passes_early();
+    test_league_network_opponent_used();
+    test_league_workers_independent();
     std::printf("test_selfplay: all tests passed\n");
     return 0;
 }

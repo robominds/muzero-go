@@ -23,6 +23,7 @@ void ReplayBuffer::rebuildPrefix() {
 }
 
 void ReplayBuffer::add(GameRecord g) {
+    assert(g.policyMask.empty() || static_cast<int>(g.policyMask.size()) == g.length());
     games_.push_back(std::move(g));
     if (static_cast<int>(games_.size()) > capacity_) {
         games_.erase(games_.begin(), games_.begin() + (games_.size() - capacity_));
