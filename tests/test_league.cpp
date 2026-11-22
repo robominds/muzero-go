@@ -121,46 +121,46 @@ static const LeagueResult kWin{20, 16}, kLoss{20, 4};
 static void test_two_strikes() {
     // Beaten once: not replaced, but marked; beaten again next generation: replaced.
     std::vector<LeagueMember> league(1);
-    assert(advanceLeague(league, {kWin}, 0.55, 20, 1, 4) == -1);
+    assert(advanceLeague(league, {kWin}, 0.55, 20, 1, false, 4) == -1);
     assert(league[0].isRandom() && league[0].beatenLastGeneration);
-    assert(advanceLeague(league, {kWin}, 0.55, 20, 1, 5) == 0);
+    assert(advanceLeague(league, {kWin}, 0.55, 20, 1, false, 5) == 0);
     assert(league[0].generation == 5 && !league[0].beatenLastGeneration);
 
     // Beaten, not beaten, beaten: the wins are not consecutive, so it stays.
     league = std::vector<LeagueMember>(1);
-    assert(advanceLeague(league, {kWin}, 0.55, 20, 1, 1) == -1 && league[0].beatenLastGeneration);
-    assert(advanceLeague(league, {kLoss}, 0.55, 20, 1, 2) == -1 && !league[0].beatenLastGeneration);
-    assert(advanceLeague(league, {kWin}, 0.55, 20, 1, 3) == -1 && league[0].isRandom());
+    assert(advanceLeague(league, {kWin}, 0.55, 20, 1, false, 1) == -1 && league[0].beatenLastGeneration);
+    assert(advanceLeague(league, {kLoss}, 0.55, 20, 1, false, 2) == -1 && !league[0].beatenLastGeneration);
+    assert(advanceLeague(league, {kWin}, 0.55, 20, 1, false, 3) == -1 && league[0].isRandom());
     assert(league[0].beatenLastGeneration);
 
     // A network member beaten once is replaced at once.
     league = {LeagueMember{2}};
-    assert(advanceLeague(league, {kWin}, 0.55, 20, 1, 7) == 0);
+    assert(advanceLeague(league, {kWin}, 0.55, 20, 1, false, 7) == 0);
     assert(league[0].generation == 7 && !league[0].beatenLastGeneration);
 
     // A random member on its second strike, but a network member scored
     // higher: the network member goes, and the random one stays marked.
     league = {LeagueMember{}, LeagueMember{2}};
     league[0].beatenLastGeneration = true;
-    assert(advanceLeague(league, {{20, 13}, {20, 18}}, 0.55, 20, 1, 8) == 1);
+    assert(advanceLeague(league, {{20, 13}, {20, 18}}, 0.55, 20, 1, false, 8) == 1);
     assert(league[0].isRandom() && league[0].beatenLastGeneration);
     assert(league[1].generation == 8 && !league[1].beatenLastGeneration);
     // ... so the next win replaces it.
-    assert(advanceLeague(league, {{20, 13}, {20, 4}}, 0.55, 20, 1, 9) == 0 && league[0].generation == 9);
+    assert(advanceLeague(league, {{20, 13}, {20, 4}}, 0.55, 20, 1, false, 9) == 0 && league[0].generation == 9);
 
     // Two random members beaten in the same generation: both marked, then
     // only one (the higher score) replaced; the other stays marked.
     league = std::vector<LeagueMember>(2);
-    assert(advanceLeague(league, {{20, 12}, {20, 14}}, 0.55, 20, 1, 1) == -1);
+    assert(advanceLeague(league, {{20, 12}, {20, 14}}, 0.55, 20, 1, false, 1) == -1);
     assert(league[0].beatenLastGeneration && league[1].beatenLastGeneration);
-    assert(advanceLeague(league, {{20, 12}, {20, 14}}, 0.55, 20, 1, 2) == 1);
+    assert(advanceLeague(league, {{20, 12}, {20, 14}}, 0.55, 20, 1, false, 2) == 1);
     assert(league[0].isRandom() && league[0].beatenLastGeneration && league[1].generation == 2);
 
     // A generation without games (league_fraction too small): nobody is
     // beaten, so a first strike is forgotten.
     league = std::vector<LeagueMember>(1);
-    advanceLeague(league, {kWin}, 0.55, 20, 1, 1);
-    assert(advanceLeague(league, {LeagueResult{}}, 0.55, 20, 1, 2) == -1 && !league[0].beatenLastGeneration);
+    advanceLeague(league, {kWin}, 0.55, 20, 1, false, 1);
+    assert(advanceLeague(league, {LeagueResult{}}, 0.55, 20, 1, false, 2) == -1 && !league[0].beatenLastGeneration);
     std::printf("test_two_strikes passed\n");
 }
 
@@ -178,26 +178,53 @@ static void test_network_wins_two() {
 
     // Beaten in one generation only: not replaced, flag set. Beaten again: replaced.
     std::vector<LeagueMember> league = {LeagueMember{2}};
-    assert(advanceLeague(league, {kWin}, 0.55, 20, 2, 7) == -1);
+    assert(advanceLeague(league, {kWin}, 0.55, 20, 2, false, 7) == -1);
     assert(league[0].generation == 2 && league[0].beatenLastGeneration);
-    assert(advanceLeague(league, {kWin}, 0.55, 20, 2, 8) == 0);
+    assert(advanceLeague(league, {kWin}, 0.55, 20, 2, false, 8) == 0);
     assert(league[0].generation == 8 && !league[0].beatenLastGeneration);
 
     // A generation where it is not beaten clears the flag: the next win is a first strike.
     league = {LeagueMember{2}};
-    assert(advanceLeague(league, {kWin}, 0.55, 20, 2, 1) == -1 && league[0].beatenLastGeneration);
-    assert(advanceLeague(league, {kLoss}, 0.55, 20, 2, 2) == -1 && !league[0].beatenLastGeneration);
-    assert(advanceLeague(league, {kWin}, 0.55, 20, 2, 3) == -1 && league[0].generation == 2);
+    assert(advanceLeague(league, {kWin}, 0.55, 20, 2, false, 1) == -1 && league[0].beatenLastGeneration);
+    assert(advanceLeague(league, {kLoss}, 0.55, 20, 2, false, 2) == -1 && !league[0].beatenLastGeneration);
+    assert(advanceLeague(league, {kWin}, 0.55, 20, 2, false, 3) == -1 && league[0].generation == 2);
     assert(league[0].beatenLastGeneration);
 
     // Two eligible slots: the higher score is replaced, the other keeps its flag.
     league = {LeagueMember{2}, LeagueMember{3}};
-    assert(advanceLeague(league, {{20, 13}, {20, 15}}, 0.55, 20, 2, 1) == -1);
+    assert(advanceLeague(league, {{20, 13}, {20, 15}}, 0.55, 20, 2, false, 1) == -1);
     assert(league[0].beatenLastGeneration && league[1].beatenLastGeneration);
-    assert(advanceLeague(league, {{20, 13}, {20, 15}}, 0.55, 20, 2, 9) == 1);
+    assert(advanceLeague(league, {{20, 13}, {20, 15}}, 0.55, 20, 2, false, 9) == 1);
     assert(league[0].generation == 2 && league[0].beatenLastGeneration);
     assert(league[1].generation == 9 && !league[1].beatenLastGeneration);
     std::printf("test_network_wins_two passed\n");
+}
+
+// league_reset_on_replace = true: a replacement clears every slot's strike.
+static void test_reset_on_replace() {
+    // A random member on its second strike is replaced; the other slot, also
+    // beaten this generation, loses its strike and needs two fresh wins.
+    std::vector<LeagueMember> league = {LeagueMember{}, LeagueMember{2}};
+    league[0].beatenLastGeneration = true;
+    league = {LeagueMember{}, LeagueMember{}};
+    league[0].beatenLastGeneration = league[1].beatenLastGeneration = true;
+    assert(advanceLeague(league, {{20, 12}, {20, 14}}, 0.55, 20, 2, true, 1) == 1);
+    assert(league[1].generation == 1);
+    assert(!league[0].beatenLastGeneration && !league[1].beatenLastGeneration);
+    // Slot 0 was beaten that generation but starts again: one win is a first strike.
+    assert(advanceLeague(league, {{20, 12}, {20, 4}}, 0.55, 20, 2, true, 2) == -1);
+    assert(league[0].beatenLastGeneration);
+    assert(advanceLeague(league, {{20, 12}, {20, 4}}, 0.55, 20, 2, true, 3) == 0);
+    // With false the other slot keeps its strike (the old rule).
+    league = {LeagueMember{}, LeagueMember{}};
+    league[0].beatenLastGeneration = league[1].beatenLastGeneration = true;
+    assert(advanceLeague(league, {{20, 12}, {20, 14}}, 0.55, 20, 2, false, 1) == 1);
+    assert(league[0].beatenLastGeneration && !league[1].beatenLastGeneration);
+    // No replacement: flags are whether each slot was beaten, as before.
+    league = {LeagueMember{}, LeagueMember{}};
+    assert(advanceLeague(league, {{20, 12}, {20, 4}}, 0.55, 20, 2, true, 1) == -1);
+    assert(league[0].beatenLastGeneration && !league[1].beatenLastGeneration);
+    std::printf("test_reset_on_replace passed\n");
 }
 
 int main() {
@@ -209,5 +236,6 @@ int main() {
     test_choose_replacement();
     test_two_strikes();
     test_network_wins_two();
+    test_reset_on_replace();
     return 0;
 }

@@ -17,7 +17,9 @@
 // remove it); a network member needs league_network_wins (1 or 2, default 2)
 // such generations in a row, 1 replacing it at once. Of the eligible members,
 // the most clearly beaten one (one per generation) is replaced by the network
-// that played, generation g - 1's during generation g. The league, with each
+// that played, generation g - 1's during generation g; with
+// league_reset_on_replace (default true) that also clears every slot's win
+// count, so all members must be beaten afresh. The league, with each
 // slot's beaten-last-generation flag, is part of state.bin, so a resume
 // continues it exactly.
 #pragma once
@@ -79,9 +81,10 @@ int chooseReplacement(const std::vector<LeagueMember>& members, const std::vecto
 // One generation's league update: the chosen slot (chooseReplacement), if
 // any, gets LeagueMember{newMember}; every other slot's beatenLastGeneration
 // becomes whether it was beaten this generation (the replaced slot's is
-// false: it holds a new member). networkWins is as for chooseReplacement.
-// Returns the slot, or -1.
+// false: it holds a new member). With resetOnReplace and a replacement,
+// every slot's flag is false instead: the wins of all members start again.
+// networkWins is as for chooseReplacement. Returns the slot, or -1.
 int advanceLeague(std::vector<LeagueMember>& members, const std::vector<LeagueResult>& results, double threshold,
-                  int minGames, int networkWins, int newMember);
+                  int minGames, int networkWins, bool resetOnReplace, int newMember);
 
 } // namespace mzgo

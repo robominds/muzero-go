@@ -94,10 +94,21 @@ current network, so those positions enter training.
    members now also need two consecutive wins by default, for the same
    noise rejection as decision 10: one lucky generation should not retire a
    member. With `league_network_wins = 1` a beaten network member is
-   replaced at once, decision 10's original network rule; random members
+   replaced at once (decision 10's original network rule, together with
+   `league_reset_on_replace = false`, decision 13); random members
    always need two. The same "beaten last generation" flag serves both. It
    may change on resume. Since the default changed, an old league run
    resumed with a new build uses 2 unless its config sets 1.
+
+13. **Option `league_reset_on_replace` (default true, Mark's choice).**
+   After a replacement the league has a new member, stronger or equal, and
+   the learner's next generation should prove itself afresh against
+   everyone, so all strikes clear (every slot's "beaten last generation"
+   flag becomes false, not only the replaced slot's). Without a replacement
+   the flags are whether each slot was beaten, as before. With
+   `league_reset_on_replace = false`, other slots keep their strike, as in
+   decisions 10 and 12. It may change on resume; an old league run resumed
+   with a new build uses true unless its config sets false.
 
 ## Non-goals
 

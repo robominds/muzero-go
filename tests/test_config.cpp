@@ -24,7 +24,7 @@ static bool sameConfig(const RunConfig& a, const RunConfig& b) {
            a.rolloutBotSimulations == b.rolloutBotSimulations && a.sgfPerGeneration == b.sgfPerGeneration &&
            a.leagueSize == b.leagueSize && a.leagueFraction == b.leagueFraction &&
            a.leagueReplaceScore == b.leagueReplaceScore && a.leagueMinGames == b.leagueMinGames &&
-           a.leagueValue == b.leagueValue && a.leagueNetworkWins == b.leagueNetworkWins && a.noPassBefore == b.noPassBefore;
+           a.leagueValue == b.leagueValue && a.leagueNetworkWins == b.leagueNetworkWins && a.leagueResetOnReplace == b.leagueResetOnReplace && a.noPassBefore == b.noPassBefore;
 }
 
 static void test_defaults_round_trip() {
@@ -33,7 +33,7 @@ static void test_defaults_round_trip() {
     RunConfig c;  // non-default values, including floats that are not short decimals
     c.seed = 18446744073709551615ULL; c.komi = 7.5f; c.lrInit = 0.0123457f; c.weightDecay = 1e-5f;
     c.dirichletScale = 0.3f; c.backend = "naive"; c.rewardHead = true; c.symmetryAugment = true;
-    c.maxMoves = 77; c.boardSize = 9; c.leagueNetworkWins = 1;
+    c.maxMoves = 77; c.boardSize = 9; c.leagueNetworkWins = 1; c.leagueResetOnReplace = false;
     assert(sameConfig(parseConfigString(configToString(c)), c));
     assert(d.resolvedMaxMoves() == 50 && c.resolvedMaxMoves() == 77);
     std::printf("test_defaults_round_trip passed\n");
@@ -163,6 +163,15 @@ static void test_league_keys() {
     assert(nw.leagueNetworkWins == 1);
     assert(configToString(nw).find("league_network_wins = 1\n") != std::string::npos);
     assert(sameConfig(parseConfigString(configToString(nw)), nw));
+    // league_reset_on_replace: default true, parses, round-trips, not an architecture key.
+    assert(d.leagueResetOnReplace && text.find("league_reset_on_replace = true\n") != std::string::npos);
+    RunConfig rr = parseConfigString("league_reset_on_replace = false\n");
+    assert(!rr.leagueResetOnReplace);
+    assert(configToString(rr).find("league_reset_on_replace = false\n") != std::string::npos);
+    assert(sameConfig(parseConfigString(configToString(rr)), rr));
+    applyOverride(rr, "league_reset_on_replace=true");
+    assert(rr.leagueResetOnReplace);
+    for (const std::string& k : architectureKeys()) assert(k != "league_reset_on_replace");
     applyOverride(nw, "league_network_wins=2");
     assert(nw.leagueNetworkWins == 2);
     // no_pass_before: default 0, parses, round-trips, rejects negatives, not an architecture key.
