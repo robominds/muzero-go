@@ -447,6 +447,13 @@ resume, then arena and GTP).
 12. Games stopped by the move cap are truncated, not ended (no reward, the
     score as the value at the cap, no targets past it); the pseudocode does
     not say how a game cut at `max_moves` is targeted.
+13. Optional training-only rule (`no_pass_before`, default 0 = off): in
+    self-play and league games a searching player may not pass before move
+    N unless pass is its only legal move. On 9x9, self-play collapsed into
+    games that end with pass-pass after a few moves, and league games
+    against the random bot saw the network pass most of its moves; those
+    passes were its own moves, so they became policy targets and reinforced
+    passing. Search below the root, arena, GTP and match are unchanged.
 
 ## Left to the builder
 

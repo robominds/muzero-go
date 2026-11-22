@@ -32,7 +32,10 @@ const char* const kUsage =
     "league_replace_score (0.6) against over league_min_games (20) games is\n"
     "replaced by it, one per generation; the random bot only after two such\n"
     "generations in a row. --set league_value=false keeps the league games from\n"
-    "training the value (policy and reward/dynamics only); it may change on resume.\n";
+    "training the value (policy and reward/dynamics only); it may change on resume.\n"
+    "--set no_pass_before=N (0 = off) forbids a searching player to pass before move\n"
+    "N in self-play and league games (unless pass is its only legal move); it may\n"
+    "change on resume.\n";
 
 int usageError(const std::string& message) {
     std::fprintf(stderr, "error: %s\n\n%s", message.c_str(), kUsage);

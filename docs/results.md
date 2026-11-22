@@ -1397,23 +1397,79 @@ replaced by generation 42, run 7's by about generation 22. After that both
 leagues hold recent networks, and a member is replaced every one or two
 generations.
 
-## 9×9: `9x9-lg-s1`
+## 9×9: `9x9-lg-s1` (stopped at generation 8, to be resumed)
 
 `runs/9x9-lg-s1` is the 9×9 preset with the pass plane and run 7's league
-(`league_size = 3`, `league_value = false`), started on 2026-11-20 as
+(`league_size = 3`, `league_value = false`), started as
 
 ```
 ./build/mzgo_train --config configs/9x9.cfg --run runs/9x9-lg-s1 --set pass_plane=true --set league_size=3 --set league_value=false --set workers=6 --set train_threads=6
 ```
 
-Its results will be reported here. If self-play still collapses into short
-games with many passes, the next experiment is forbidding passes early in
-self-play.
+It was stopped at generation 8. Self-play games had collapsed to 5.9 moves,
+and newer networks lost to older ones (0.1–0.25 against the network five
+generations back). In the saved league games the learner passed 54 of its
+about 65 moves while the random bot filled the board. Those are the
+learner's own moves, so they become policy targets that reinforce passing.
+This was judged too early: both earlier 9×9 runs also collapsed in their
+first 20 generations and recovered later. The run is being resumed to 150
+generations as the league-only comparison for the next run.
+
+## 9×9: `9x9-nep-s1`, league plus no early passes
+
+`runs/9x9-nep-s1` is `9x9-lg-s1` plus `no_pass_before = 30`: in self-play
+and league games, a searching player may not pass before move 30 unless
+pass is its only legal move. The random bot, the arena and the match tools
+are unaffected. Started as
+
+```
+./build/mzgo_train --config configs/9x9.cfg --run runs/9x9-nep-s1 --set pass_plane=true --set league_size=3 --set league_value=false --set no_pass_before=30 --set workers=6 --set train_threads=6
+```
+
+It ran all 150 generations, about 19 hours on 6 cores. This is the first 9×9
+run that learned to beat the random bot. Ten-generation means of the arena
+(20 games each):
+
+| Generations | Self-play mean length | vs random | vs `rollout:200` |
+|---|---|---|---|
+| 1–10 | 38 | 0.00 | 0.03 |
+| 21–30 | 34 | 0.01 | 0.10 |
+| 41–50 | 69 | 0.11 | 0.15 |
+| 61–70 | 87 | 0.24 | 0.12 |
+| 81–90 | 98 | 0.45 | 0.15 |
+| 101–110 | 99 | 0.52 | 0.20 |
+| 121–130 | 98 | 0.65 | 0.28 |
+| 141–150 | 95 | 0.74 | 0.27 |
+
+Generation 150 in 200-game matches (200 simulations, `--temperature-moves 4`,
+komi 7.5, seed 7):
+
+| Opponent | Score |
+|---|---|
+| The random bot | 0.73 (146–54) |
+| `rollout:200` | 0.30 (60–140) |
+| `9x9-s1` generation 94 | 0.865 (173–27) |
+
+For the first 30 generations self-play games ended just after move 30,
+with a pass at the first legal chance. They grew to 95–100 moves by about
+generation 80. The random-bot slots stayed in the league until generations
+89–96, about when the arena score against the random bot passed 0.45; after
+that the league held recent networks. The score was still rising at
+generation 150.
+
+Two things changed at once compared with `9x9-pp-s1`, the league and the
+no-early-pass rule, so this run does not say which one was needed. The
+resumed `9x9-lg-s1` (league only) answers that. `no_pass_before` is a
+training-only deviation from the paper. It uses no Go knowledge beyond
+"pass can end the game", so it is a minimum-game-length rule, the same kind
+of exploration aid as root noise and temperature. A stronger rule ("no pass
+while a non-eye-filling move remains") was considered and rejected, because
+it builds hand-written Go knowledge (what an eye is) into the player.
 
 An earlier 9×9 run, `runs/9x9-rh-s1`, was started on the pre-fix code and
 stopped after 3 generations. Its checkpoints are format version 1 and no
 longer load. The head-to-head against `alphazero-go` will be reported here
-once a 9×9 run has a checkpoint worth comparing.
+once it has been played.
 
 ## What changed because of these results
 
@@ -1437,6 +1493,8 @@ once a 9×9 run has a checkpoint worth comparing.
   (`league_size = 0`). Run 7's setting, `league_value = false`, is the one to
   use. The default stays `true`, the plain design, so that runs 6 and 7 can
   each be reproduced from their configs.
+- `no_pass_before` (off by default) was added for `9x9-nep-s1`. With 0, every
+  output is byte-identical to the build before it.
 
 ---
 

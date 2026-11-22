@@ -351,6 +351,7 @@ void Trainer::runGeneration() {
     sp.temperatureMoves = cfg_.temperatureMoves;
     sp.komi = cfg_.komi;
     sp.group = cfg_.selfplayGroup;
+    sp.noPassBefore = cfg_.noPassBefore;
     // With a league, the last L games are league games: games 2k and 2k + 1
     // play the member in slot k mod league_size, the learner Black in the
     // first, White in the second; each network member is loaded once.

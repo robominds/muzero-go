@@ -24,7 +24,7 @@ static bool sameConfig(const RunConfig& a, const RunConfig& b) {
            a.rolloutBotSimulations == b.rolloutBotSimulations && a.sgfPerGeneration == b.sgfPerGeneration &&
            a.leagueSize == b.leagueSize && a.leagueFraction == b.leagueFraction &&
            a.leagueReplaceScore == b.leagueReplaceScore && a.leagueMinGames == b.leagueMinGames &&
-           a.leagueValue == b.leagueValue;
+           a.leagueValue == b.leagueValue && a.noPassBefore == b.noPassBefore;
 }
 
 static void test_defaults_round_trip() {
@@ -154,6 +154,23 @@ static void test_league_keys() {
     applyOverride(lv, "league_value=true");
     assert(lv.leagueValue);
     for (const std::string& k : architectureKeys()) assert(k != "league_value");
+    // no_pass_before: default 0, parses, round-trips, rejects negatives, not an architecture key.
+    assert(d.noPassBefore == 0 && text.find("no_pass_before = 0\n") != std::string::npos);
+    RunConfig np = parseConfigString("no_pass_before = 12\n");
+    assert(np.noPassBefore == 12);
+    validate(np);
+    assert(configToString(np).find("no_pass_before = 12\n") != std::string::npos);
+    assert(sameConfig(parseConfigString(configToString(np)), np));
+    applyOverride(np, "no_pass_before=3");
+    assert(np.noPassBefore == 3);
+    np.noPassBefore = -1;
+    try {
+        validate(np);
+        assert(false && "expected std::invalid_argument");
+    } catch (const std::invalid_argument& e) {
+        assert(std::string(e.what()).find("no_pass_before") != std::string::npos);
+    }
+    for (const std::string& k : architectureKeys()) assert(k != "no_pass_before");
     // league_size cannot change on resume (the trainer's check, test_trainer),
     // but it fixes no tensor shape, so it is not an architecture key.
     for (const std::string& k : architectureKeys()) assert(k.compare(0, 7, "league_") != 0);

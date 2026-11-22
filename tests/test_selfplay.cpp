@@ -362,6 +362,102 @@ static void test_league_workers_independent() {
     std::printf("test_league_workers_independent passed\n");
 }
 
+// ---- no_pass_before ----
+
+static void test_root_legal_actions() {
+    Game g(5, 24.5f, defaultMaxMoves(5));
+    const int pass = g.board().passAction();
+    assert(g.moveCount() == 0);
+    const std::vector<int> legal = g.legalActions();
+    const std::vector<int> early = rootLegalActions(g, 10);
+    assert(std::find(early.begin(), early.end(), pass) == early.end());
+    assert(early.size() + 1 == legal.size());
+    for (int a : legal)
+        if (a != pass) assert(std::find(early.begin(), early.end(), a) != early.end());
+    assert(rootLegalActions(g, 0) == legal);
+    // From move N on, pass is back.
+    Game h(5, 24.5f, defaultMaxMoves(5));
+    for (int i = 0; i < 3; ++i) h.play(i);
+    assert(rootLegalActions(h, 3) == h.legalActions());
+    assert(rootLegalActions(h, 4) != h.legalActions());
+    assert(rootLegalActions(h, 4).size() + 1 == h.legalActions().size());
+    // A position where pass is the only legal move keeps it, whatever N is. Found by seeded
+    // random play on a 2x2 board (suicide and superko leave nothing else).
+    bool found = false;
+    for (uint64_t seed = 1; seed < 2000 && !found; ++seed) {
+        Rng rng(seed);
+        Game t(2, 0.5f, 40);
+        while (!t.isTerminal()) {
+            const std::vector<int> la = t.legalActions();
+            if (la.size() == 1) {
+                assert(la[0] == t.board().passAction());
+                assert(rootLegalActions(t, 1000) == la);
+                found = true;
+                break;
+            }
+            const int a = la[rng.below(static_cast<int>(la.size()))];
+            if (a == t.board().passAction() && la.size() > 1) continue;   // avoid ending the game
+            t.play(a);
+        }
+    }
+    assert(found);
+    std::printf("test_root_legal_actions passed\n");
+}
+
+// A network that puts nearly all prior mass on pass.
+static FakeModel passLover() {
+    return FakeModel(kDims, 1, [](const float*, FakeOutput& o) { o.logits[kActions - 1] = 30.0f; });
+}
+static SelfPlayConfig quietConfig(int sims, int noPassBefore) {
+    SelfPlayConfig cfg = config(sims, 4);
+    cfg.mcts.addNoise = false;
+    cfg.temperatureMoves = 0;
+    cfg.noPassBefore = noPassBefore;
+    return cfg;
+}
+static bool earlyPass(const GameRecord& r, int upTo, int learnerParity = -1, int gameIndex = 0) {
+    for (int t = 0; t < std::min(upTo, r.length()); ++t)
+        if (r.moves[t] == kActions - 1 && (learnerParity < 0 || learnerAt(gameIndex, t))) return true;
+    return false;
+}
+
+static void test_no_pass_before_selfplay() {
+    const FakeModel model = passLover();
+    const auto on = playSelfPlay(model, quietConfig(8, 6), 4, 9, 1);
+    for (const GameRecord& r : on) {
+        assert(r.length() > 6);
+        assert(!earlyPass(r, 6));
+        for (int t = 0; t < 6; ++t) assert(r.policies[static_cast<size_t>(t) * kActions + kActions - 1] == 0.0f);
+    }
+    const auto off = playSelfPlay(model, quietConfig(8, 0), 4, 9, 1);
+    for (const GameRecord& r : off) assert(r.length() == 2 && r.moves[0] == kActions - 1);
+    std::printf("test_no_pass_before_selfplay passed\n");
+}
+
+static void test_no_pass_before_league() {
+    const FakeModel learner = passLover();
+    const FakeModel opponent = passLover();
+    const SelfPlayConfig cfg = quietConfig(8, 6);
+    // Against the random bot.
+    const auto vsBot = playLeagueGames(learner, {LeagueOpponent{}}, {0, 0, 0, 0}, cfg, 3, 1);
+    for (int i = 0; i < 4; ++i) {
+        assert(vsBot[i].length() > 6);
+        assert(!earlyPass(vsBot[i], 6, 1, i));
+        for (int t = 0; t < 6; ++t)
+            if (learnerAt(i, t)) assert(vsBot[i].policies[static_cast<size_t>(t) * kActions + kActions - 1] == 0.0f);
+    }
+    // Against a network: neither side passes early.
+    const auto vsNet = playLeagueGames(learner, {LeagueOpponent{&opponent}}, {0, 0, 0, 0}, cfg, 3, 1);
+    for (const GameRecord& r : vsNet) {
+        assert(r.length() > 6);
+        assert(!earlyPass(r, 6));
+    }
+    // Off: the pass-lover learner passes at once.
+    const auto off = playLeagueGames(learner, {LeagueOpponent{}}, {0, 0}, quietConfig(8, 0), 3, 1);
+    assert(earlyPass(off[0], 6, 1, 0));
+    std::printf("test_no_pass_before_league passed\n");
+}
+
 int main() {
     test_selfplay_finishes();
     test_selfplay_workers_independent();
@@ -373,6 +469,9 @@ int main() {
     test_league_workers_independent();
     test_league_capped_games_masks();
     test_league_opponent_recurrent_model_used();
+    test_root_legal_actions();
+    test_no_pass_before_selfplay();
+    test_no_pass_before_league();
     std::printf("test_selfplay: all tests passed\n");
     return 0;
 }
