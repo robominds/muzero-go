@@ -457,12 +457,15 @@ void Trainer::runGeneration() {
     }
 
     // The league: the network that played (generation g - 1's) replaces the
-    // most clearly beaten eligible member (a random one needs a second win in
-    // a row), at most one per generation; every slot's strike is updated. A
+    // most clearly beaten eligible member (a random one, or a network one with
+    // league_network_wins 2, needs a second win in a row), at most one per
+    // generation; every slot's strike is updated. A
     // generation without league games beats nobody, so it clears the strikes.
     const std::vector<LeagueMember> leagueBefore = league_;
     const int replacedSlot =
-        hasLeague ? advanceLeague(league_, results, cfg_.leagueReplaceScore, cfg_.leagueMinGames, g - 1) : -1;
+        hasLeague ? advanceLeague(league_, results, cfg_.leagueReplaceScore, cfg_.leagueMinGames,
+                                  cfg_.leagueNetworkWins, g - 1)
+                  : -1;
 
     // 4. Checkpoint, then state.bin: from here on the generation is done
     // and a resume continues with g + 1. A crash after this point (in the
@@ -538,11 +541,12 @@ void Trainer::runGeneration() {
             if (leagueGames > 0) *log_ << ", mean length " << num(leagueStats.meanLength);
             *log_ << ") ";
             for (size_t i = 0; i < leagueBefore.size(); ++i)
-                // '*': a random member's strike (beaten, not replaced); one
-                // more win in a row replaces it.
+                // '*': a strike that counts (beaten, not replaced, and a random
+                // member or league_network_wins 2); one more win in a row
+                // replaces it.
                 *log_ << (i ? " | " : "") << leagueBefore[i].name() << " "
                       << (results[i].games > 0 ? num(results[i].score()) : "-")
-                      << (league_[i].isRandom() && league_[i].beatenLastGeneration ? "*" : "");
+                      << (league_[i].beatenLastGeneration && (league_[i].isRandom() || cfg_.leagueNetworkWins == 2) ? "*" : "");
             if (replacedSlot >= 0)
                 *log_ << ", slot " << replacedSlot << " -> " << league_[static_cast<size_t>(replacedSlot)].name();
         }

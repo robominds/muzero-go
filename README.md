@@ -153,9 +153,9 @@ When the network scores well enough against a member, the network that
 played (generation g − 1's during generation g) takes its slot, at most one
 slot per generation. A random-bot member must be beaten in two generations
 in a row first (it never comes back once replaced, so one noisy win should
-not remove it); a network member goes after one. The summary line marks a
-random member that was beaten but not replaced (so one more win in a row
-replaces it) with `*` after its score (`random 0.7*`);
+not remove it); a network member too, by default (`league_network_wins`).
+The summary line marks a member that was beaten but not replaced and whose
+strike counts (so one more win in a row replaces it) with `*` after its score (`random 0.7*`);
 `state.bin` keeps the strikes, so a resume continues them. The keys:
 
 - `league_size` (default 0 = off, 0..8): the number of slots; cannot change on resume.
@@ -163,6 +163,7 @@ replaces it) with `*` after its score (`random 0.7*`);
 - `league_replace_score` (default 0.6, 0..1): the score (a draw counts half) that beats a member.
 - `league_value` (default true): true: league games train the value like self-play games; false: league games give no value targets (policy and reward/dynamics only). May change on resume; it only affects games added afterwards.
 - `no_pass_before` (default 0, ≥ 0): 0: off; N: in self-play and league games, a searching player (the network being trained, or a league network) may not pass before move N, counted from the start of the game, unless pass is its only legal move. Arena, GTP and match tools are unaffected. May change on resume.
+- `league_network_wins` (default 2, 1..2): how many generations in a row a network member must be beaten to be replaced; 1 replaces it after one (the rule before this key). A random member always needs 2. May change on resume.
 - `league_min_games` (default 20, ≥ 0): the fewest games against a member for its score to count; a config where some slot gets fewer league games a generation than this is rejected (that member could never be replaced).
 
 `league_fraction` counts games, not positions: league games against the

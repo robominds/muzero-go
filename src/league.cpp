@@ -51,21 +51,22 @@ bool leagueBeaten(const LeagueResult& r, double threshold, int minGames) {
 }
 
 int chooseReplacement(const std::vector<LeagueMember>& members, const std::vector<LeagueResult>& results,
-                      double threshold, int minGames) {
+                      double threshold, int minGames, int networkWins) {
     assert(members.size() == results.size());
     int best = -1;
     for (size_t i = 0; i < results.size(); ++i) {
         const LeagueResult& r = results[i];
         if (!leagueBeaten(r, threshold, minGames)) continue;
-        if (members[i].isRandom() && !members[i].beatenLastGeneration) continue;   // its first strike
+        const bool oneWinEnough = !members[i].isRandom() && networkWins == 1;
+        if (!members[i].beatenLastGeneration && !oneWinEnough) continue;   // its first strike
         if (best < 0 || r.score() > results[static_cast<size_t>(best)].score()) best = static_cast<int>(i);
     }
     return best;
 }
 
 int advanceLeague(std::vector<LeagueMember>& members, const std::vector<LeagueResult>& results, double threshold,
-                  int minGames, int newMember) {
-    const int slot = chooseReplacement(members, results, threshold, minGames);
+                  int minGames, int networkWins, int newMember) {
+    const int slot = chooseReplacement(members, results, threshold, minGames, networkWins);
     assert(members.size() == results.size());
     for (size_t i = 0; i < members.size(); ++i)
         members[i].beatenLastGeneration = leagueBeaten(results[i], threshold, minGames);

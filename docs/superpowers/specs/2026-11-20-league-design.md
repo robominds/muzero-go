@@ -90,6 +90,15 @@ current network, so those positions enter training.
    affects games added afterwards. Off by default in the sense that true
    keeps decision 4 unchanged.
 
+12. **Option `league_network_wins` (default 2, Mark's choice).** Network
+   members now also need two consecutive wins by default, for the same
+   noise rejection as decision 10: one lucky generation should not retire a
+   member. With `league_network_wins = 1` a beaten network member is
+   replaced at once, decision 10's original network rule; random members
+   always need two. The same "beaten last generation" flag serves both. It
+   may change on resume. Since the default changed, an old league run
+   resumed with a new build uses 2 unless its config sets 1.
+
 ## Non-goals
 
 - No AlphaStar-style exploiter agents or prioritized opponent sampling.
