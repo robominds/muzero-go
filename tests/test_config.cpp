@@ -24,7 +24,7 @@ static bool sameConfig(const RunConfig& a, const RunConfig& b) {
            a.rolloutBotSimulations == b.rolloutBotSimulations && a.sgfPerGeneration == b.sgfPerGeneration &&
            a.leagueSize == b.leagueSize && a.leagueFraction == b.leagueFraction &&
            a.leagueReplaceScore == b.leagueReplaceScore && a.leagueMinGames == b.leagueMinGames &&
-           a.leagueValue == b.leagueValue && a.noPassBefore == b.noPassBefore;
+           a.leagueValue == b.leagueValue && a.leagueNetworkWins == b.leagueNetworkWins && a.noPassBefore == b.noPassBefore;
 }
 
 static void test_defaults_round_trip() {
@@ -33,7 +33,7 @@ static void test_defaults_round_trip() {
     RunConfig c;  // non-default values, including floats that are not short decimals
     c.seed = 18446744073709551615ULL; c.komi = 7.5f; c.lrInit = 0.0123457f; c.weightDecay = 1e-5f;
     c.dirichletScale = 0.3f; c.backend = "naive"; c.rewardHead = true; c.symmetryAugment = true;
-    c.maxMoves = 77; c.boardSize = 9;
+    c.maxMoves = 77; c.boardSize = 9; c.leagueNetworkWins = 1;
     assert(sameConfig(parseConfigString(configToString(c)), c));
     assert(d.resolvedMaxMoves() == 50 && c.resolvedMaxMoves() == 77);
     std::printf("test_defaults_round_trip passed\n");
@@ -118,12 +118,15 @@ static void test_errors() {
     expectThrowsNaming("league_replace_score", "league_replace_score=-0.5", true);
     expectThrowsNaming("league_replace_score", "league_replace_score=1.01", true);
     expectThrowsNaming("league_min_games", "league_min_games=-1", true);
+    expectThrowsNaming("league_network_wins", "league_network_wins=0", true);
+    expectThrowsNaming("league_network_wins", "league_network_wins=3", true);
+    expectThrowsNaming("league_network_wins", "league_network_wins=two", false);
     // Their boundary values are accepted.
     RunConfig edge;
     for (const char* kv : {"train_steps=0", "workers=0", "train_threads=0", "arena_games=0", "arena_every=0",
                            "temperature_moves=0", "max_moves=0", "lr_decay_steps=1", "selfplay_group=1",
                            "arena_gap=1", "sgf_per_generation=0", "league_size=8", "league_fraction=1",
-                           "league_replace_score=0", "league_min_games=0"})
+                           "league_replace_score=0", "league_min_games=0", "league_network_wins=1"})
         applyOverride(edge, kv);
     validate(edge);
     std::printf("test_errors passed\n");
@@ -154,6 +157,14 @@ static void test_league_keys() {
     applyOverride(lv, "league_value=true");
     assert(lv.leagueValue);
     for (const std::string& k : architectureKeys()) assert(k != "league_value");
+    // league_network_wins: default 2, parses, round-trips, not an architecture key.
+    assert(d.leagueNetworkWins == 2 && text.find("league_network_wins = 2\n") != std::string::npos);
+    RunConfig nw = parseConfigString("league_network_wins = 1\n");
+    assert(nw.leagueNetworkWins == 1);
+    assert(configToString(nw).find("league_network_wins = 1\n") != std::string::npos);
+    assert(sameConfig(parseConfigString(configToString(nw)), nw));
+    applyOverride(nw, "league_network_wins=2");
+    assert(nw.leagueNetworkWins == 2);
     // no_pass_before: default 0, parses, round-trips, rejects negatives, not an architecture key.
     assert(d.noPassBefore == 0 && text.find("no_pass_before = 0\n") != std::string::npos);
     RunConfig np = parseConfigString("no_pass_before = 12\n");

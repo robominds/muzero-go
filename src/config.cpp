@@ -51,6 +51,7 @@ std::vector<Field> fields(RunConfig& c) {
         {"league_replace_score", Kind::Float, &c.leagueReplaceScore},
         {"league_min_games", Kind::Int, &c.leagueMinGames},
         {"league_value", Kind::Bool, &c.leagueValue},
+        {"league_network_wins", Kind::Int, &c.leagueNetworkWins},
         {"no_pass_before", Kind::Int, &c.noPassBefore},
         {"replay_games", Kind::Int, &c.replayGames},
         {"train_steps", Kind::Int, &c.trainSteps},
@@ -235,6 +236,7 @@ void validate(const RunConfig& c) {
     if (!(c.leagueFraction >= 0 && c.leagueFraction <= 1)) bad("league_fraction", "must be in 0..1");
     if (!(c.leagueReplaceScore >= 0 && c.leagueReplaceScore <= 1)) bad("league_replace_score", "must be in 0..1");
     if (c.leagueMinGames < 0) bad("league_min_games", "must be >= 0");
+    if (c.leagueNetworkWins < 1 || c.leagueNetworkWins > 2) bad("league_network_wins", "must be 1 or 2");
     // Settings under which no member could ever be replaced.
     if (c.leagueSize > 0 && c.gamesPerGeneration >= 1) {
         const int L = leagueGameCount(c.gamesPerGeneration, c.leagueFraction, c.leagueSize);

@@ -498,6 +498,10 @@ static void test_league_resume_matches_uninterrupted() {
     std::vector<std::string> expected = splitOn(rows[1][n - kMembers], ';');
     expected[std::stoi(rows[1][n - kReplaced])] = "gen_1";
     assert(rows[2][n - kMembers] == expected[0] + ";" + expected[1]);
+    // league_network_wins defaults to 2: generation 3 beats gen_1 for the
+    // first time (a first strike), so the slot replaced is the random one
+    // that was beaten twice, not the network member.
+    assert(expected[std::stoi(rows[2][n - kReplaced])] == "random");
     std::printf("test_league_resume_matches_uninterrupted passed\n");
 }
 
