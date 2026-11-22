@@ -33,6 +33,7 @@ struct RunConfig {
     int leagueSize = 0; float leagueFraction = 0.5f, leagueReplaceScore = 0.6f; int leagueMinGames = 20;
     bool leagueValue = true;   // false: league games give no value targets; may change on resume
     int leagueNetworkWins = 2; // consecutive generations a network member must be beaten to be replaced (1..2); may change on resume
+    bool leagueResetOnReplace = true;   // a replacement clears every slot's strike; false: other slots keep theirs; may change on resume
     int noPassBefore = 0;      // self-play/league: a searching player may not pass before this move (0 = off); may change on resume
     // training
     int replayGames = 2000, trainSteps = 200, batchSize = 128, unrollSteps = 5;

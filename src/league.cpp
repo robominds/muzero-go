@@ -65,12 +65,16 @@ int chooseReplacement(const std::vector<LeagueMember>& members, const std::vecto
 }
 
 int advanceLeague(std::vector<LeagueMember>& members, const std::vector<LeagueResult>& results, double threshold,
-                  int minGames, int networkWins, int newMember) {
+                  int minGames, int networkWins, bool resetOnReplace, int newMember) {
     const int slot = chooseReplacement(members, results, threshold, minGames, networkWins);
     assert(members.size() == results.size());
     for (size_t i = 0; i < members.size(); ++i)
         members[i].beatenLastGeneration = leagueBeaten(results[i], threshold, minGames);
-    if (slot >= 0) members[static_cast<size_t>(slot)] = LeagueMember{newMember};
+    if (slot >= 0) {
+        members[static_cast<size_t>(slot)] = LeagueMember{newMember};
+        if (resetOnReplace)
+            for (LeagueMember& m : members) m.beatenLastGeneration = false;
+    }
     return slot;
 }
 

@@ -459,12 +459,13 @@ void Trainer::runGeneration() {
     // The league: the network that played (generation g - 1's) replaces the
     // most clearly beaten eligible member (a random one, or a network one with
     // league_network_wins 2, needs a second win in a row), at most one per
-    // generation; every slot's strike is updated. A
+    // generation; every slot's strike is updated (all cleared by a
+    // replacement, with league_reset_on_replace). A
     // generation without league games beats nobody, so it clears the strikes.
     const std::vector<LeagueMember> leagueBefore = league_;
     const int replacedSlot =
         hasLeague ? advanceLeague(league_, results, cfg_.leagueReplaceScore, cfg_.leagueMinGames,
-                                  cfg_.leagueNetworkWins, g - 1)
+                                  cfg_.leagueNetworkWins, cfg_.leagueResetOnReplace, g - 1)
                   : -1;
 
     // 4. Checkpoint, then state.bin: from here on the generation is done

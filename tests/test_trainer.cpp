@@ -431,7 +431,8 @@ static void test_league_generation() {
 
     // Generation 2: both are beaten again, so both are eligible; one (the
     // higher score, ties to slot 0) is replaced by gen 1, the network that
-    // played, and the other keeps its strike.
+    // played, and (league_reset_on_replace, default true) the other's strike
+    // is cleared too.
     summary.str("");
     t.runGeneration();
     const std::vector<std::string> row2 = splitCsv(lines(readFile(dir + "/log.csv"))[2]);
@@ -439,11 +440,13 @@ static void test_league_generation() {
     assert(replaced == 0 || replaced == 1);
     assert(row2[n - kMembers] == "random;random");
     assert(league[replaced].generation == 1 && !league[replaced].beatenLastGeneration);
-    assert(league[1 - replaced].isRandom() && league[1 - replaced].beatenLastGeneration);
+    assert(league[1 - replaced].isRandom() && !league[1 - replaced].beatenLastGeneration);
     const std::vector<std::string> scores2 = splitOn(row2[n - kScores], ';');
     assert(std::stod(scores2[replaced]) >= std::stod(scores2[1 - replaced]));
     assert(contains(summary.str(), ", slot " + std::to_string(replaced) + " -> gen_1"));
-    assert(contains(summary.str(), "random " + scores2[1 - replaced] + "*"));
+    assert(contains(summary.str(), "random " + scores2[1 - replaced] + " | ") ||
+           contains(summary.str(), "random " + scores2[1 - replaced] + ", slot"));
+    assert(!contains(summary.str(), "random " + scores2[1 - replaced] + "*"));
     std::printf("test_league_generation passed\n");
 }
 
@@ -462,10 +465,12 @@ static std::string logWithoutTimes(const std::string& dir) {
 static void test_league_resume_matches_uninterrupted() {
     const std::string straight = freshDir("league_straight"), split = freshDir("league_split");
     RunConfig three = leagueConfig();
+    three.leagueResetOnReplace = false;   // keep the other slot's strike, so generation 3 replaces again
     three.generations = 3;
     Trainer::startNew(three, straight).run();
 
     RunConfig one = leagueConfig();
+    one.leagueResetOnReplace = false;
     one.generations = 1;
     Trainer::startNew(one, split).run();
     Trainer second = Trainer::resume(split, {"generations=3"});
