@@ -1537,9 +1537,10 @@ the random bot it levelled off near 0.8. In the 200-game matches,
 generation 250 beats generation 200 in 199 of 200 games and
 `9x9-nep-s1`'s generation 150 in 182, the largest generation-to-generation
 gain seen on 9×9, and comes within 0.035 of an even score against
-`rollout:200`. Against the random bot it scores lower than generation 200
-(0.76 against 0.815): it gets stronger against opponents that play Go while
-still losing about a quarter of its games to random moves. Since the rule
+`rollout:200`. Against the random bot it scores no better than generation
+200 (0.76 against 0.815, a gap within about two standard errors at 200
+games): it gets stronger against opponents that play Go while still losing
+about a quarter of its games to random moves. Since the rule
 change and the extra generations come together, this does not show that
 the new rule caused the gain, only that it did not stop it. The run is
 being extended to generation 300 with the same settings.
