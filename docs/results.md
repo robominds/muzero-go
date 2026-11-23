@@ -1397,7 +1397,7 @@ replaced by generation 42, run 7's by about generation 22. After that both
 leagues hold recent networks, and a member is replaced every one or two
 generations.
 
-## 9×9: `9x9-lg-s1` (stopped at generation 8, to be resumed)
+## 9×9: `9x9-lg-s1` (stopped at generation 8, then resumed)
 
 `runs/9x9-lg-s1` is the 9×9 preset with the pass plane and run 7's league
 (`league_size = 3`, `league_value = false`), started as
@@ -1412,8 +1412,8 @@ generations back). In the saved league games the learner passed 54 of its
 about 65 moves while the random bot filled the board. Those are the
 learner's own moves, so they become policy targets that reinforce passing.
 This was judged too early: both earlier 9×9 runs also collapsed in their
-first 20 generations and recovered later. The run is being resumed to 150
-generations as the league-only comparison for the next run.
+first 20 generations and recovered later. The run was resumed as the
+league-only comparison for the next run; see "`9x9-lg-s1` resumed" below.
 
 ## 9×9: `9x9-nep-s1`, league plus no early passes
 
@@ -1466,6 +1466,84 @@ of exploration aid as root noise and temperature. A stronger rule ("no pass
 while a non-eye-filling move remains") was considered and rejected, because
 it builds hand-written Go knowledge (what an eye is) into the player.
 
+## 9×9: `9x9-lg-s1` resumed, league only (generations 8–250)
+
+Was the no-early-pass rule needed, or was `9x9-lg-s1` stopped too early?
+It was resumed from generation 8 with the same settings (`no_pass_before =
+0`), to 150 generations, then extended to 200 and to 250:
+
+```
+./build/mzgo_train --resume runs/9x9-lg-s1 --set workers=6 --set train_threads=6
+./build/mzgo_train --resume runs/9x9-lg-s1 --set generations=200 --set workers=6 --set train_threads=6
+./build/mzgo_train --resume runs/9x9-lg-s1 --set generations=250 --set league_network_wins=2 --set league_reset_on_replace=true --set workers=6 --set train_threads=6
+```
+
+Generations 1–200 used the league rules of `9x9-nep-s1` (a beaten network
+member is replaced at once). Generations 201–250 used the two rules added
+after generation 200 (below): a network member must also be beaten in two
+generations in a row, and any replacement clears every slot's strike.
+Ten-generation means of the arena (20 games each); the last column counts
+league replacements:
+
+| Generations | Self-play mean length | vs random | vs `rollout:200` | Replacements |
+|---|---|---|---|---|
+| 1–10 | 20 | 0.00 | 0.01 | 0 |
+| 11–20 | 5 | 0.00 | 0.00 | 0 |
+| 41–50 | 7 | 0.00 | 0.00 | 0 |
+| 61–70 | 36 | 0.01 | 0.01 | 0 |
+| 81–90 | 62 | 0.08 | 0.01 | 0 |
+| 101–110 | 65 | 0.26 | 0.06 | 0 |
+| 121–130 | 85 | 0.54 | 0.14 | 0 |
+| 141–150 | 95 | 0.51 | 0.22 | 4 |
+| 161–170 | 97 | 0.61 | 0.26 | 5 |
+| 181–190 | 95 | 0.66 | 0.28 | 8 |
+| 191–200 | 93 | 0.75 | 0.35 | 7 |
+| 201–210 | 90 | 0.71 | 0.35 | 1 |
+| 221–230 | 90 | 0.80 | 0.42 | 2 |
+| 241–250 | 92 | 0.78 | 0.49 | 2 |
+
+200-game matches (same settings as for `9x9-nep-s1`):
+
+| Generation | Opponent | Score |
+|---|---|---|
+| 150 | The random bot | 0.65 (130–70) |
+| 150 | `rollout:200` | 0.275 (55–145) |
+| 150 | `9x9-s1` generation 94 | 0.855 (171–29) |
+| 150 | `9x9-nep-s1` generation 150 | 0.215 (43–157) |
+| 200 | The random bot | 0.815 (163–37) |
+| 200 | `rollout:200` | 0.40 (80–120) |
+| 200 | `9x9-lg-s1` generation 150 | 0.925 (185–15) |
+| 200 | `9x9-nep-s1` generation 150 | 0.43 (86–114) |
+| 250 | The random bot | 0.76 (152–48) |
+| 250 | `rollout:200` | 0.465 (93–107) |
+| 250 | `9x9-lg-s1` generation 200 | 0.995 (199–1) |
+| 250 | `9x9-nep-s1` generation 150 | 0.91 (182–18) |
+
+The league alone escaped the early-pass trap. Self-play games stayed at
+5–8 moves for generations 11–50, then grew to about 95 by generation 140,
+and the score against the random bot rose once games had passed about 60
+moves (generation 90 on), as in `9x9-nep-s1`. The first random slot was replaced at generation 132
+(`9x9-nep-s1`: 89) and the last at about 150. So `no_pass_before` was not
+needed, but it shortened the stall by about 50 generations: at generation
+150 the no-early-pass network wins 157 of 200 games against this one.
+
+After generation 200 the replacement rule changed (Mark's choice, for noise
+rejection): `league_network_wins = 2` and `league_reset_on_replace = true`.
+Replacements fell from 32 in generations 151–200 (most generations replaced
+someone, so members rarely lasted more than a few generations) to 11 in
+generations 201–250. The score against `rollout:200` kept rising, to 0.49 in
+the arena over generations 241–250, the best of any 9×9 run so far; against
+the random bot it levelled off near 0.8. In the 200-game matches,
+generation 250 beats generation 200 in 199 of 200 games and
+`9x9-nep-s1`'s generation 150 in 182, the largest generation-to-generation
+gain seen on 9×9, and comes within 0.035 of an even score against
+`rollout:200`. Against the random bot it scores lower than generation 200
+(0.76 against 0.815): it gets stronger against opponents that play Go while
+still losing about a quarter of its games to random moves. Since the rule
+change and the extra generations come together, this does not show that
+the new rule caused the gain, only that it did not stop it. The run is
+being extended to generation 300 with the same settings.
+
 An earlier 9×9 run, `runs/9x9-rh-s1`, was started on the pre-fix code and
 stopped after 3 generations. Its checkpoints are format version 1 and no
 longer load. The head-to-head against `alphazero-go` will be reported here
@@ -1495,6 +1573,12 @@ once it has been played.
   each be reproduced from their configs.
 - `no_pass_before` (off by default) was added for `9x9-nep-s1`. With 0, every
   output is byte-identical to the build before it.
+- `league_network_wins` (default 2) and `league_reset_on_replace` (default
+  true) were added after `9x9-lg-s1` generation 200 to make league
+  replacements less noisy. Their defaults change the league's behavior;
+  `league_network_wins = 1` with `league_reset_on_replace = false` restores
+  the rule that runs 6 and 7, `9x9-nep-s1` and `9x9-lg-s1` up to generation
+  200 used.
 
 ---
 
