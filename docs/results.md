@@ -1466,7 +1466,7 @@ of exploration aid as root noise and temperature. A stronger rule ("no pass
 while a non-eye-filling move remains") was considered and rejected, because
 it builds hand-written Go knowledge (what an eye is) into the player.
 
-## 9×9: `9x9-lg-s1` resumed, league only (generations 8–300)
+## 9×9: `9x9-lg-s1` resumed, league only (generations 8–450)
 
 Was the no-early-pass rule needed, or was `9x9-lg-s1` stopped too early?
 It was resumed from generation 8 with the same settings (`no_pass_before =
@@ -1477,6 +1477,8 @@ It was resumed from generation 8 with the same settings (`no_pass_before =
 ./build/mzgo_train --resume runs/9x9-lg-s1 --set generations=200 --set workers=6 --set train_threads=6
 ./build/mzgo_train --resume runs/9x9-lg-s1 --set generations=250 --set league_network_wins=2 --set league_reset_on_replace=true --set workers=6 --set train_threads=6
 ./build/mzgo_train --resume runs/9x9-lg-s1 --set generations=300 --set workers=6 --set train_threads=6
+./build/mzgo_train --resume runs/9x9-lg-s1 --set generations=350 --set workers=6 --set train_threads=6
+./build/mzgo_train --resume runs/9x9-lg-s1 --set generations=450 --set lr_init=0.002 --set lr_decay_rate=1 --set workers=6 --set train_threads=6
 ```
 
 Generations 1–200 used the league rules of `9x9-nep-s1` (a beaten network
@@ -1505,6 +1507,13 @@ league replacements:
 | 251–260 | 91 | 0.79 | 0.40 | 4 |
 | 271–280 | 95 | 0.82 | 0.55 | 4 |
 | 291–300 | 98 | 0.82 | 0.47 | 2 |
+| 321–330 | 98 | 0.87 | 0.51 | 4 |
+| 341–350 | 98 | 0.89 | 0.55 | 4 |
+| 351–360 | 98 | 0.83 | 0.61 | 2 |
+| 381–390 | 97 | 0.86 | 0.63 | 2 |
+| 401–410 | 96 | 0.96 | 0.73 | 4 |
+| 421–430 | 96 | 0.94 | 0.67 | 5 |
+| 441–450 | 96 | 0.93 | 0.68 | 3 |
 
 200-game matches (same settings as for `9x9-nep-s1`):
 
@@ -1526,6 +1535,14 @@ league replacements:
 | 300 | `rollout:200` | 0.455 (91–109) |
 | 300 | `9x9-lg-s1` generation 250 | 1.00 (200–0) |
 | 300 | `9x9-nep-s1` generation 150 | 0.985 (197–3) |
+| 350 | The random bot | 0.95 (190–10) |
+| 350 | `rollout:200` | 0.56 (112–88) |
+| 450 | The random bot | 0.935 (187–13) |
+| 450 | `rollout:200` | 0.755 (151–49) |
+| 450 | `9x9-lg-s1` generation 400 | 0.50 (100–100) |
+| 450 | `9x9-lg-s1` generation 350 | 0.50 (100–100) |
+| 450 | `9x9-lg-s1` generation 300 | 0.98 (196–4) |
+| 450 | `9x9-nep-s1` generation 150 | 0.985 (197–3) |
 
 The league alone escaped the early-pass trap. Self-play games stayed at
 5–8 moves for generations 11–50, then grew to about 95 by generation 140,
@@ -1559,8 +1576,40 @@ has held at about 0.46 since generation 250 (0.40–0.55 in the arena). The
 league replaced a member 14 times in these 50 generations. The learning
 rate is now low: `lr_decay_steps = 60000` with `lr_decay_rate = 0.1`
 (the 9×9 preset) takes it from 0.02 to 0.0002 at generation 300 (400 steps a
-generation), which may be why the rollout score has stopped rising. The
-run is being extended to generation 350 with the same settings.
+generation), which may be why the rollout score has stopped rising.
+
+Generations 301–350 kept the decaying rate (0.0002 down to 0.00009). In
+the 200-game matches generation 350 scores 0.95 against the random bot and
+0.56 against `rollout:200`. A separate 100-game look at generation 350
+against `rollout:200` (a scratch program; 0.53 there) found that the losses
+are lost fights, not passes: in its 47 losses the rollout player captured
+21 of the network's stones on average (1 in its wins), 26 losses had 10 or
+more captured, and at the network's first pass it was already about 10
+points behind; only 4 losses had it passing while ahead. It was weaker as
+Black (20–30) than as White (33–17). A likely cause is reading: a capturing
+race longer than `unroll_steps = 5` is read through imagined states that
+training never checked, while the rollout player plays every fight out on
+the real board.
+
+Generations 351–450 held the learning rate at 0.002 (`lr_init = 0.002`,
+`lr_decay_rate = 1`). The training loss fell at once (3.58 over
+generations 341–350, 3.38 over 351–360, 3.25 over 441–450), and the arena
+score against `rollout:200` rose from about 0.55 to about 0.68. In the
+200-game matches generation 450 scores 0.755 against `rollout:200` (generation
+350: 0.56, generation 300: 0.455) and 0.935 against the random bot, and
+beats generation 300 in 196 games of 200.
+
+Against generations 350 and 400 it scores exactly 0.50, and this says
+little: in a 40-game replay of the generation-400 match (same seed, a
+scratch program that keeps the colors), Black won every game, whichever
+network had it, and the games repeated: 20 of the 20 with generation 450 as
+White ended with the same margin, −12.5, and the other 20 with only two
+margins. With `temperature-moves = 4`, two similar networks play almost the
+same few games, so a head-to-head match between them measures little more
+than which color wins those games. The earlier 199–1 and 200–0 results were
+the newer network winning with both colors. The matches against
+`rollout:200` and the random bot, whose moves vary, are the measures to use
+from here.
 
 An earlier 9×9 run, `runs/9x9-rh-s1`, was started on the pre-fix code and
 stopped after 3 generations. Its checkpoints are format version 1 and no
