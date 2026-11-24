@@ -1466,20 +1466,21 @@ of exploration aid as root noise and temperature. A stronger rule ("no pass
 while a non-eye-filling move remains") was considered and rejected, because
 it builds hand-written Go knowledge (what an eye is) into the player.
 
-## 9×9: `9x9-lg-s1` resumed, league only (generations 8–250)
+## 9×9: `9x9-lg-s1` resumed, league only (generations 8–300)
 
 Was the no-early-pass rule needed, or was `9x9-lg-s1` stopped too early?
 It was resumed from generation 8 with the same settings (`no_pass_before =
-0`), to 150 generations, then extended to 200 and to 250:
+0`), to 150 generations, then extended 50 generations at a time:
 
 ```
 ./build/mzgo_train --resume runs/9x9-lg-s1 --set workers=6 --set train_threads=6
 ./build/mzgo_train --resume runs/9x9-lg-s1 --set generations=200 --set workers=6 --set train_threads=6
 ./build/mzgo_train --resume runs/9x9-lg-s1 --set generations=250 --set league_network_wins=2 --set league_reset_on_replace=true --set workers=6 --set train_threads=6
+./build/mzgo_train --resume runs/9x9-lg-s1 --set generations=300 --set workers=6 --set train_threads=6
 ```
 
 Generations 1–200 used the league rules of `9x9-nep-s1` (a beaten network
-member is replaced at once). Generations 201–250 used the two rules added
+member is replaced at once). Generations 201 on used the two rules added
 after generation 200 (below): a network member must also be beaten in two
 generations in a row, and any replacement clears every slot's strike.
 Ten-generation means of the arena (20 games each); the last column counts
@@ -1501,6 +1502,9 @@ league replacements:
 | 201–210 | 90 | 0.71 | 0.35 | 1 |
 | 221–230 | 90 | 0.80 | 0.42 | 2 |
 | 241–250 | 92 | 0.78 | 0.49 | 2 |
+| 251–260 | 91 | 0.79 | 0.40 | 4 |
+| 271–280 | 95 | 0.82 | 0.55 | 4 |
+| 291–300 | 98 | 0.82 | 0.47 | 2 |
 
 200-game matches (same settings as for `9x9-nep-s1`):
 
@@ -1518,6 +1522,10 @@ league replacements:
 | 250 | `rollout:200` | 0.465 (93–107) |
 | 250 | `9x9-lg-s1` generation 200 | 0.995 (199–1) |
 | 250 | `9x9-nep-s1` generation 150 | 0.91 (182–18) |
+| 300 | The random bot | 0.83 (166–34) |
+| 300 | `rollout:200` | 0.455 (91–109) |
+| 300 | `9x9-lg-s1` generation 250 | 1.00 (200–0) |
+| 300 | `9x9-nep-s1` generation 150 | 0.985 (197–3) |
 
 The league alone escaped the early-pass trap. Self-play games stayed at
 5–8 moves for generations 11–50, then grew to about 95 by generation 140,
@@ -1542,8 +1550,17 @@ gain seen on 9×9, and comes within 0.035 of an even score against
 games): it gets stronger against opponents that play Go while still losing
 about a quarter of its games to random moves. Since the rule
 change and the extra generations come together, this does not show that
-the new rule caused the gain, only that it did not stop it. The run is
-being extended to generation 300 with the same settings.
+the new rule caused the gain, only that it did not stop it.
+
+Generations 251–300 kept the same settings. Generation 300 beats generation
+250 in all 200 games and `9x9-nep-s1`'s generation 150 in 197; against the
+random bot it recovers to 0.83, the best so far. Against `rollout:200` it
+has held at about 0.46 since generation 250 (0.40–0.55 in the arena). The
+league replaced a member 14 times in these 50 generations. The learning
+rate is now low: `lr_decay_steps = 60000` with `lr_decay_rate = 0.1`
+(the 9×9 preset) takes it from 0.02 to 0.0002 at generation 300 (400 steps a
+generation), which may be why the rollout score has stopped rising. The
+run is being extended to generation 350 with the same settings.
 
 An earlier 9×9 run, `runs/9x9-rh-s1`, was started on the pre-fix code and
 stopped after 3 generations. Its checkpoints are format version 1 and no
