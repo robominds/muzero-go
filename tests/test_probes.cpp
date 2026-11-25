@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <string>
 #include <vector>
 #include "mzgo/backend.hpp"
@@ -26,6 +27,29 @@ NetConfig smallConfig() {
     cfg.filters = 16;
     cfg.valueHidden = 8;
     return cfg;
+}
+
+// Means over every position of every game of 2|v(h)| and (v(h) - z)^2,
+// one position at a time (the probe batches them, so expect float-level
+// differences, not identical bits).
+struct Fresh0 { double twiceAbs, sqError; };
+Fresh0 fresh0(const Model& model, const std::vector<GameRecord>& games) {
+    const ModelDims dims = model.dims();
+    std::vector<float> obs(static_cast<size_t>(numPlanes(model.history(), model.passPlane())) * dims.area());
+    std::unique_ptr<ModelSession> session = model.newSession(1);
+    ModelOutput out;
+    double twiceAbs = 0, sq = 0;
+    long n = 0;
+    for (const GameRecord& g : games)
+        for (int p = 0; p < g.length(); ++p) {
+            encodeRecordPosition(g, p, model.history(), 0, obs.data(), model.passPlane());
+            session->initialInference(obs.data(), 1, out);
+            const double v = out.values[0], z = g.outcomeFor(p);
+            twiceAbs += 2.0 * std::fabs(v);
+            sq += (v - z) * (v - z);
+            ++n;
+        }
+    return {twiceAbs / n, sq / n};
 }
 
 } // namespace
@@ -61,6 +85,19 @@ static void test_latent_probe_k0_is_zero() {
     for (const GameRecord& g : games) positions += g.length();
     assert(rows[0].k == 0 && rows[0].samples == positions);
     assert(rows[0].valueError == 0.0 && rows[0].policyTv == 0.0);   // imagined = fresh
+    assert(rows[0].imaginedValue == rows[0].freshValue && rows[0].imaginedSqError == rows[0].freshSqError);
+    // At k = 0, |v + v| = 2|v|, and the squared errors against z = +-1 are
+    // what direct arithmetic on the fresh values gives.
+    {
+        const Fresh0 f = fresh0(model, games);
+        assert(std::fabs(rows[0].flipError - f.twiceAbs) < 1e-4);
+        assert(std::fabs(rows[0].freshSqError - f.sqError) < 1e-4);
+    }
+    for (int k = 1; k <= 3; ++k) {
+        assert(rows[k].imaginedSqError >= 0.0 && rows[k].imaginedSqError <= 4.0);
+        assert(rows[k].freshSqError >= 0.0 && rows[k].freshSqError <= 4.0);
+        assert(rows[k].flipError >= 0.0 && rows[k].flipError <= 2.0);
+    }
     for (int k = 1; k <= 3; ++k) {
         assert(rows[k].k == k && rows[k].samples > 0 && rows[k].samples < rows[k - 1].samples);
         assert(rows[k].valueError > 0.0 && rows[k].valueError <= 2.0);

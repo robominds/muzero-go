@@ -49,6 +49,13 @@ struct LatentRow {
     long samples;
     double valueError;   // mean |v(s_k) - v(h(position t+k))|
     double policyTv;     // mean 0.5 * sum_a |p(s_k)_a - p(h(position t+k))_a|, over all actions
+    // Against the game's result z = outcomeFor(t+k) (side to move's view, as
+    // the value target is): which of the two values is wrong when they disagree?
+    double imaginedValue = 0;     // mean v(s_k), signed
+    double freshValue = 0;        // mean v(h(position t+k)), signed
+    double imaginedSqError = 0;   // mean (v(s_k) - z)^2, the training value loss's measure
+    double freshSqError = 0;      // mean (v(h(position t+k)) - z)^2
+    double flipError = 0;         // mean |v(s_k) + v(h(position t+k))|: small if s_k's value has the wrong sign
 };
 std::vector<LatentRow> latentProbe(const Model&, const std::vector<GameRecord>&, int maxK);
 

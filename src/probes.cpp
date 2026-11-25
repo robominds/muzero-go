@@ -162,14 +162,26 @@ std::vector<LatentRow> latentProbe(const Model& model, const std::vector<GameRec
         double l1 = 0;
         for (int a = 0; a < A; ++a) l1 += std::fabs(static_cast<double>(probs[a]) - real[a]);
         LatentRow& r = rows[k];
+        const double vi = out.values[row], vf = fresh.values[s.game][p], z = games[s.game].outcomeFor(p);
         r.samples += 1;
-        r.valueError += std::fabs(static_cast<double>(out.values[row]) - fresh.values[s.game][p]);
+        r.valueError += std::fabs(vi - vf);
         r.policyTv += 0.5 * l1;
+        r.imaginedValue += vi;
+        r.freshValue += vf;
+        r.imaginedSqError += (vi - z) * (vi - z);
+        r.freshSqError += (vf - z) * (vf - z);
+        r.flipError += std::fabs(vi + vf);
     });
     for (LatentRow& r : rows) {
         if (r.samples == 0) continue;
-        r.valueError /= static_cast<double>(r.samples);
-        r.policyTv /= static_cast<double>(r.samples);
+        const double n = static_cast<double>(r.samples);
+        r.valueError /= n;
+        r.policyTv /= n;
+        r.imaginedValue /= n;
+        r.freshValue /= n;
+        r.imaginedSqError /= n;
+        r.freshSqError /= n;
+        r.flipError /= n;
     }
     return rows;
 }

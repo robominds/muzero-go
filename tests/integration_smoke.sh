@@ -43,7 +43,10 @@ for p in latent_probe rules_probe board_probe; do
     "$BUILD/mzgo_$p" --checkpoint "$CKPT" --games 4 --k 2 --workers 2 ${extra[@]+"${extra[@]}"} >"$TMP/$p.txt" 2>&1 \
         || { cat "$TMP/$p.txt" >&2; fail "$p"; }
 done
-expect latent_probe "mean policy TV distance" "$TMP/latent_probe.txt"
+expect latent_probe "policy TV" "$TMP/latent_probe.txt"
+"$BUILD/mzgo_latent_probe" --checkpoint "$CKPT" --games 2 --k 2 --replay "$RUN/state.bin" >"$TMP/latent_replay.txt" 2>&1 \
+    || { cat "$TMP/latent_replay.txt" >&2; fail "latent_probe --replay"; }
+expect "latent_probe --replay" "2 self-play games from" "$TMP/latent_replay.txt"
 expect rules_probe "illegal" "$TMP/rules_probe.txt"
 expect board_probe "accuracy" "$TMP/board_probe.txt"
 "$BUILD/mzgo_analyze" --checkpoint "$CKPT" --moves "C3 B3" --simulations 8 --top 3 >"$TMP/analyze.txt" 2>&1 \

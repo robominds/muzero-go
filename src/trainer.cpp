@@ -559,4 +559,36 @@ void Trainer::run() {
     while (generation_ < cfg_.generations) runGeneration();
 }
 
+ReplayBuffer readReplayFromState(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) throw std::runtime_error("cannot open " + path);
+    BinaryReader r(in);
+    try {
+        // The same order as Trainer::resume reads it: header, network,
+        // optimizer velocity, then the replay buffer.
+        char magic[4];
+        r.bytes(magic, 4);
+        if (!std::equal(magic, magic + 4, kStateMagic)) throw std::runtime_error("not an MZRS run state");
+        const uint32_t version = r.u32();
+        if (version < 1 || version > kStateVersion)
+            throw std::runtime_error("unsupported version " + std::to_string(version));
+        r.i32();   // generation
+        r.u64();   // step
+        MuZeroNetwork net = readNetwork(r, "network");
+        const std::vector<ParamView> params = net.params();
+        const uint32_t count = r.u32();
+        if (count != params.size()) throw std::runtime_error("velocity tensor count does not match the network");
+        std::vector<float> scratch;
+        for (const ParamView& p : params) {
+            const uint64_t size = r.u64();
+            if (size != p.size) throw std::runtime_error("velocity of '" + p.name + "' has the wrong size");
+            scratch.resize(p.size);
+            r.floats(scratch.data(), p.size);
+        }
+        return ReplayBuffer::load(r);
+    } catch (const std::exception& e) {
+        throw std::runtime_error(path + ": " + e.what());
+    }
+}
+
 } // namespace mzgo

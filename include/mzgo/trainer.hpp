@@ -143,4 +143,9 @@ private:
     std::vector<LeagueMember> league_;
 };
 
+// The replay buffer saved in a run's state.bin, read without resuming the
+// run (nothing is written). For probes on the games a run trained on. A
+// missing or corrupt file is a std::runtime_error naming it.
+ReplayBuffer readReplayFromState(const std::string& statePath);
+
 } // namespace mzgo
