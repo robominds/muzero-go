@@ -1466,7 +1466,7 @@ of exploration aid as root noise and temperature. A stronger rule ("no pass
 while a non-eye-filling move remains") was considered and rejected, because
 it builds hand-written Go knowledge (what an eye is) into the player.
 
-## 9×9: `9x9-lg-s1` resumed, league only (generations 8–450)
+## 9×9: `9x9-lg-s1` resumed, league only (generations 8–550)
 
 Was the no-early-pass rule needed, or was `9x9-lg-s1` stopped too early?
 It was resumed from generation 8 with the same settings (`no_pass_before =
@@ -1514,6 +1514,12 @@ league replacements:
 | 401–410 | 96 | 0.96 | 0.73 | 4 |
 | 421–430 | 96 | 0.94 | 0.67 | 5 |
 | 441–450 | 96 | 0.93 | 0.68 | 3 |
+| 451–460 | 98 | 0.97 | 0.79 | 4 |
+| 471–480 | 99 | 0.97 | 0.81 | 4 |
+| 491–500 | 100 | 0.99 | 0.86 | 3 |
+| 511–520 | 99 | 1.00 | 0.93 | 2 |
+| 531–540 | 100 | 0.99 | 0.93 | 2 |
+| 541–550 | 98 | 0.98 | 0.93 | 3 |
 
 200-game matches (same settings as for `9x9-nep-s1`):
 
@@ -1543,6 +1549,13 @@ league replacements:
 | 450 | `9x9-lg-s1` generation 350 | 0.50 (100–100) |
 | 450 | `9x9-lg-s1` generation 300 | 0.98 (196–4) |
 | 450 | `9x9-nep-s1` generation 150 | 0.985 (197–3) |
+| 450 | `rollout:1000` | 0.365 (73–127) |
+| 500 | The random bot | 0.99 (198–2) |
+| 500 | `rollout:200` | 0.86 (172–28) |
+| 500 | `rollout:1000` | 0.725 (145–55) |
+| 550 | The random bot | 0.985 (197–3) |
+| 550 | `rollout:200` | 0.925 (185–15) |
+| 550 | `rollout:1000` | 0.835 (167–33) |
 
 The league alone escaped the early-pass trap. Self-play games stayed at
 5–8 moves for generations 11–50, then grew to about 95 by generation 140,
@@ -1706,6 +1719,33 @@ with fix 1 added:
 
 The probe's value columns against z and its `--replay` option (probe along
 a run's own self-play games) were added for this investigation.
+
+### Generations 451–550: symmetry augmentation
+
+The run reached generation 550 with symmetry augmentation from generation
+454 on and the learning rate falling to 0.0002. It gained more in these 100
+generations than in any earlier stretch: against `rollout:1000`, the
+stronger yardstick, the score rose from 0.365 at generation 450 to 0.725 at
+500 and 0.835 at 550, and against `rollout:200` from 0.755 to 0.925. The
+arena's ten-generation mean against `rollout:200` rose from 0.68 to 0.93.
+
+The memorization is gone. On generation 550's own self-play games,
+checkpoint 549 (not yet trained on them) has value error 0.647 and
+checkpoint 550 (trained once) 0.643; at generation 450 the same comparison
+was about 1.03 against 0.43. The error on games not yet seen fell from
+about 1.0 to 0.65, so the value head now generalizes to new games instead
+of learning each one by heart. The training loss rose at once when
+augmentation began (3.24 at generation 453, 4.29 at 454) and fell back to
+3.54 by generations 541–550, as expected when the same game can no longer
+be recognized.
+
+Two things changed at once, symmetry and the falling learning rate, so the
+strength gain cannot be credited to either alone. Even the memorization
+measure is not clean evidence: a smaller learning rate also shrinks what
+one generation of training adds. The training loss's jump at the first
+augmented generation, while the rate was still 0.0019, is the one sign
+that belongs to symmetry alone. A run with symmetry at a constant learning
+rate would separate the two.
 
 ## What changed because of these results
 
