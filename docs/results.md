@@ -1626,8 +1626,7 @@ from here.
 
 An earlier 9×9 run, `runs/9x9-rh-s1`, was started on the pre-fix code and
 stopped after 3 generations. Its checkpoints are format version 1 and no
-longer load. The head-to-head against `alphazero-go` will be reported here
-once it has been played.
+longer load.
 
 ### Generation 450: what limits it
 
@@ -1746,6 +1745,74 @@ one generation of training adds. The training loss's jump at the first
 augmented generation, while the rate was still 0.0019, is the one sign
 that belongs to symmetry alone. A run with symmetry at a constant learning
 rate would separate the two.
+
+### Generation 550: the imagined states, and `alphazero-go`
+
+`mzgo_latent_probe` on generation 550, the same 100 rollout-bot games as
+for generation 450 (`--games 100 --k 12 --seed 1`), mean |value
+difference| between f on the imagined state and f on a fresh look:
+
+| k | 1 | 2 | 3 | 5 | 8 | 12 |
+|---|---|---|---|---|---|---|
+| generation 450 | 0.54 | 0.24 | 0.56 | 0.58 | 0.42 | 0.49 |
+| generation 550 | 0.14 | 0.11 | 0.17 | 0.19 | 0.21 | 0.25 |
+
+The policy TV distance fell from 0.34–0.43 to 0.24–0.33 over k = 1–12,
+and the fresh value's error against the result from 1.07 to 0.68. The
+odd/even pattern is gone, and the probe's signed means (`--replay`, on
+the next generation's self-play games) explain it. For checkpoint 450 on
+generation 451's games the fresh value averages +0.11 at every k, while
+the imagined value averages −0.12 to −0.16 at odd k and +0.12 to +0.16 at
+even k: after an odd number of imagined moves the value had the wrong
+sign, as guessed above. For checkpoint 549 on generation 550's games both
+means stay within ±0.02 of each other at every k.
+
+The value one move deep still barely tells the moves apart. In the
+scratch move-sensitivity check (40 self-play games, every legal move at
+each position), the correlation between the imagined depth-1 value and a
+fresh look at the position the move leads to rose from 0.05 to 0.20
+(checkpoint 549; 0.12 on older games), still weak.
+
+Against `alphazero-go`: 100-game matches through `tools/gtp_match.py`,
+both engines at 200 simulations, komi 7.5, Tromp-Taylor scoring by this
+engine, against `alphazero-go`'s 6×64 run from scratch (`9x9-scratch`,
+seed 1; a network about the size of this one's 6 + 6 blocks of 64). That
+run's generations have measured ratings against GNU Go 3.8 at level 10
+(`alphazero-go`'s `docs/results/9x9-gnugo/`). `alphazero-go` used
+`--random-symmetry` and a different seed per match, so all games differ.
+
+```
+python3 tools/gtp_match.py \
+    --a "./build/mzgo_gtp --checkpoint runs/9x9-lg-s1/checkpoints/gen_0550.mzn --simulations 200" \
+    --b "ALPHAZERO_GO/build-blas/gtp --checkpoint ALPHAZERO_GO/runs/9x9-scratch/checkpoints/gen_0050.azn --backend blas --simulations 200 --mcts-batch 8 --random-symmetry --seed 11" \
+    --games 100 --size 9 --komi 7.5 --out runs/vs-az/mz550-az050
+```
+
+| `muzero-go` | `alphazero-go` `9x9-scratch` (its rating vs GNU Go) | Score | Elo, this − that |
+|---|---|---|---|
+| generation 450 | generation 50 (−512) | 0.00 (0–100) | below −566 |
+| generation 450 | generation 150 (−35) | 0.00 (0–100) | below −566 |
+| generation 550 | generation 50 (−512) | 0.23 (23–77) | −210 (−290 to −130) |
+| generation 550 | generation 150 (−35) | 0.03 (3–97) | −604 (−794 to −414) |
+| generation 550 | generation 250 (+210) | 0.03 (3–97) | −604 (−794 to −414) |
+
+Every game ended in two passes, with no forfeits, and the two engines'
+`final_score` named the same winner in all of them. Generation 550 won 9
+of 50 as Black and 14 of 50 as White against generation 50, and lost by
+about 7 points on average. Chained through generation 50's rating it is
+about −720 against GNU Go at level 10, and through generation 150's about
+−640; with two intervals stacked, both are good only to about ±150. The
+scores against generations 150 and 250 are at the floor and do not tell
+those two apart.
+
+So generation 550, which beats `rollout:1000` in 167 games of 200, is
+weaker than `alphazero-go` after 50 generations with a network of the
+same size. The rollout players are weak Go players, and beating them no
+longer measures much; `alphazero-go`'s early generations are the ladder
+to use from here. Part of the gap is the design: `alphazero-go` searches
+on the real board and knows exactly when a game ends, while this search
+reads imagined states whose values one move deep are still weakly
+informative (above).
 
 ## What changed because of these results
 
