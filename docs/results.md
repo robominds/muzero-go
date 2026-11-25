@@ -1616,6 +1616,97 @@ stopped after 3 generations. Its checkpoints are format version 1 and no
 longer load. The head-to-head against `alphazero-go` will be reported here
 once it has been played.
 
+### Generation 450: what limits it
+
+Generation 450 scores 0.755 against `rollout:200` but 0.365 against
+`rollout:1000`. Four checks looked for the cause, all on generation 450.
+
+**More search does not help.** 200-game matches at different simulation
+counts:
+
+| Simulations | vs `rollout:200` | vs `rollout:1000` |
+|---|---|---|
+| 1 | 0.695 | — |
+| 25 | 0.715 | — |
+| 200 (the training setting) | 0.755 | 0.365 |
+| 800 | 0.72 | 0.41 |
+
+One simulation (the policy head's move) is already within 0.06 of 200,
+and 800 is no better than 200 within noise (two standard errors at 200
+games are about ±0.07). The strength is in the network's single look, and
+the search adds little to it.
+
+**The imagined states do not break down at `unroll_steps`.**
+`mzgo_latent_probe` on 100 rollout-bot games, out to k = 12, compares f on
+the state imagined k steps ahead with f on a fresh look at the real
+position:
+
+| k | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 12 |
+|---|---|---|---|---|---|---|---|---|---|
+| \|value difference\| | 0.54 | 0.24 | 0.56 | 0.32 | 0.58 | 0.38 | 0.59 | 0.42 | 0.49 |
+| policy TV distance | 0.34 | 0.32 | 0.35 | 0.35 | 0.37 | 0.38 | 0.39 | 0.39 | 0.43 |
+
+Policy drift grows smoothly with no jump past k = 5, so the fight-reading
+explanation offered at generation 350 is not supported. The value
+difference is large at every k and alternates: about 0.54–0.61 at odd k
+and 0.24–0.49 at even k. One untested reading is that after an odd number
+of imagined moves the value comes out close to the right size with the
+wrong sign.
+
+**The value head memorizes the games it trains on.** Value mean squared
+error against the game's result z (±1, so predicting 0 everywhere scores
+1.0) on fixed sets of self-play games, for three consecutive checkpoints.
+Generation G plays its games with checkpoint G − 1 and then trains on
+them, so checkpoint G has trained once on generation G's games:
+
+| Games | gen 449 | gen 450 | gen 451 |
+|---|---|---|---|
+| Generation 451's 100 self-play games | 1.03 | 1.04 | 0.43 |
+| Generation 450's 100 self-play games | 0.89 | 0.52 | 0.40 |
+
+On games it has not yet trained on, a checkpoint does about as well as
+predicting 0 (0.89–1.04); one generation of training on them halves the
+error (0.52, 0.43). The
+correlation between value and result, by third of the game, is 0.74 /
+0.98 / 0.997 on games already trained on and 0.18 / 0.33 / 0.58 on games
+not yet seen: the value head is weakly informative on new games, but much
+too confident. Each position stays in the 2500-game buffer for about 12
+generations and serves as a value target about 30 times in that span
+(400 steps × 256 samples × 6 unroll targets a generation), which is
+enough to learn individual games by heart. A scratch check of batch norm
+ruled out the other suspect: value loss on the same batches is about the
+same with training-mode and inference-mode statistics.
+
+**The search cannot correct it.** Root search values track the game
+results no better than the raw value. At depth 1, the imagined values
+barely depend on the move: across the top five moves their spread is
+0.05 (a fresh look at the same five positions: 0.14), they correlate
+with the fresh values at about 0.05, and they sit close to minus the root
+value. So the tree's first ply sees almost the same value under every
+move, and the choice falls to the prior. That is consistent with one
+simulation playing nearly as well as 800, though not shown to cause it.
+
+The fixes to try, one at a time and measured by the held-out value error
+above (about 1.0 now) and by `rollout:1000` (0.365 now):
+
+1. `symmetry_augment = true`: transform each training sample by one of the
+   board's eight symmetries, chosen at random, so the same game is seen
+   eight ways and is harder to memorize.
+2. Less reuse: fewer `train_steps` a generation, or more games.
+3. Value targets that mix in search values, or Reanalyse.
+
+Generations 451–453 ran with the learning rate falling from 0.002 to reach
+0.0002 at generation 550 (`lr_init = 63.245553`, `lr_decay_rate = 0.1`,
+`lr_decay_steps = 40000`). The run was then restarted from generation 453
+with fix 1 added:
+
+```
+./build/mzgo_train --resume runs/9x9-lg-s1 --set generations=550 --set symmetry_augment=true --set lr_init=63.245553 --set lr_decay_rate=0.1 --set lr_decay_steps=40000 --set workers=6 --set train_threads=6
+```
+
+The probe's value columns against z and its `--replay` option (probe along
+a run's own self-play games) were added for this investigation.
+
 ## What changed because of these results
 
 - `configs/5x5.cfg` and `configs/9x9.cfg` set `reward_head = true`. The
