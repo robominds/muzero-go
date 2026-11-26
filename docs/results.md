@@ -1466,7 +1466,7 @@ of exploration aid as root noise and temperature. A stronger rule ("no pass
 while a non-eye-filling move remains") was considered and rejected, because
 it builds hand-written Go knowledge (what an eye is) into the player.
 
-## 9×9: `9x9-lg-s1` resumed, league only (generations 8–550)
+## 9×9: `9x9-lg-s1` resumed, league only (generations 8–550), then self-play only (551–650)
 
 Was the no-early-pass rule needed, or was `9x9-lg-s1` stopped too early?
 It was resumed from generation 8 with the same settings (`no_pass_before =
@@ -1813,6 +1813,67 @@ to use from here. Part of the gap is the design: `alphazero-go` searches
 on the real board and knows exactly when a game ends, while this search
 reads imagined states whose values one move deep are still weakly
 informative (above).
+
+### Generations 551–650: self-play only
+
+Was the league still needed? The run was resumed from generation 550 with
+no league games, symmetry on, and the learning rate raised back to 0.002
+and falling again to 0.0002 by generation 650 (`lr_init` is the rate at
+step 0, so 632.455532 puts 0.002 at generation 551):
+
+```
+./build/mzgo_train --resume runs/9x9-lg-s1 --set generations=650 --set league_fraction=0 --set league_min_games=0 \
+    --set lr_init=632.455532 --set lr_decay_rate=0.1 --set lr_decay_steps=40000 --set workers=6 --set train_threads=6
+```
+
+`league_size` cannot change on resume, but with `league_fraction = 0` no
+league games are played and no member is replaced. Ten-generation means of
+the arena (20 games each):
+
+| Generations | Self-play mean length | vs random | vs `rollout:200` |
+|---|---|---|---|
+| 541–550 (league) | 98 | 0.98 | 0.93 |
+| 551–560 | 95 | 0.99 | 0.94 |
+| 571–580 | 99 | 0.99 | 0.97 |
+| 581–590 | 98 | 0.92 | 0.90 |
+| 591–600 | 97 | 0.86 | 0.81 |
+| 611–620 | 95 | 0.76 | 0.66 |
+| 621–630 | 95 | 0.76 | 0.59 |
+| 641–650 | 95 | 0.74 | 0.63 |
+
+The training loss rose from 3.54 to about 5.2 at once. That is the
+loss's bookkeeping, not the network: league games carry no value targets
+and no policy targets for the opponent's moves, and the masked sums are
+divided by the whole batch, so a batch with no league games has about
+twice as many targets.
+
+200-game matches (same settings as above) and 100-game matches against
+`alphazero-go` `9x9-scratch` (same command as above, seeds 31–33):
+
+| Generation | Random bot | `rollout:1000` | `alphazero-go` gen 50 | `alphazero-go` gen 150 |
+|---|---|---|---|---|
+| 550 (league) | 0.985 | 0.835 | 0.23 | 0.03 |
+| 600 | 0.825 | 0.82 | 0.45 (−35, −103 to +33) | |
+| 650 | 0.71 | 0.62 | 0.53 (+21, −47 to +89) | 0.10 (−382, −493 to −270) |
+
+The two yardsticks moved in opposite directions. Against `alphazero-go`
+generation 50 the score rose from 0.23 to 0.53, level with it, and against
+generation 150 from 0.03 to 0.10. Against the random bot and
+`rollout:1000` it fell, and losing 29 games in 100 to random play is a
+new weakness. The gain is lopsided by color: generation 650 won 40 of 50
+as White against generation 50 and 13 of 50 as Black (generation 600: 21
+and 24; generation 550: 14 and 9). One game ran to the move cap; every
+other game ended in two passes, and both engines named the same winner in
+all of them. Value error on generation 650's own self-play games before
+training on them (checkpoint 649) is 0.74, against 0.65 at generation 550.
+
+A likely reading: without league opponents, self-play sharpened play
+against an opponent that plays like itself, as `alphazero-go` does, and
+lost what the league had taught about the odd moves weak players make.
+The raised learning rate changed at the same time, so this run alone does
+not separate the two. A run from generation 550 with the league on and
+400 games a generation (`runs/9x9-lg400-s1`, same learning rate schedule)
+was started next.
 
 ## What changed because of these results
 
